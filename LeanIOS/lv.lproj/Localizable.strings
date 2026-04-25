@@ -1,0 +1,20 @@
+/* Button: Cancel */
+"button-cancel" = "Atcelt";
+
+/* Button: OK */
+"button-ok" = "Labi";
+
+/* Button: View */
+"button-view" = "Skatīt";
+
+/* Button: Menu */
+"button-menu" = "Izvēlne";
+
+/* Button: Copy Link */
+"button-copy-link" = "Kopēt saites adresi";
+
+/* Button: Open External */
+"button-open-external" = "Atvērt saiti ārējā pārlūkprogrammā";
+
+/* Button: Share External */
+"button-share-link" = "Kopīgojiet saiti";

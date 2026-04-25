@@ -1,0 +1,20 @@
+/* Button: Cancel */
+"button-cancel" = "Tühista";
+
+/* Button: OK */
+"button-ok" = "OK";
+
+/* Button: View */
+"button-view" = "Vaade";
+
+/* Button: Menu */
+"button-menu" = "Menüü";
+
+/* Button: Copy Link */
+"button-copy-link" = "Kopeeri lingi aadress";
+
+/* Button: Open External */
+"button-open-external" = "Ava link välises brauseris";
+
+/* Button: Share External */
+"button-share-link" = "Jaga linki";

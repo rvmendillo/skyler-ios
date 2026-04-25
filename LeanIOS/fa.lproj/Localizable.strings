@@ -1,0 +1,20 @@
+/* Button: Cancel */
+"button-cancel" = "لغو کردن";
+
+/* Button: OK */
+"button-ok" = "تایید";
+
+/* Button: View */
+"button-view" = "نمایش";
+
+/* Button: Menu */
+"button-menu" = "منو";
+
+/* Button: Copy Link */
+"button-copy-link" = "کپی کردن آدرس لینک";
+
+/* Button: Open External */
+"button-open-external" = "باز کردن لینک در مرورگر";
+
+/* Button: Share External */
+"button-share-link" = "به اشتراک گذاشتن لینک";

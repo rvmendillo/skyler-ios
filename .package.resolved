@@ -1,0 +1,48 @@
+{
+  "originHash" : "aa852aee8ee04ba95862c86f85498ec20bb1c60ac504fefe65ca16677c86d4e5",
+  "pins" : [
+    {
+      "identity" : "median.go-native-core",
+      "kind" : "registry",
+      "location" : "",
+      "state" : {
+        "version" : "3.0.5"
+      }
+    },
+    {
+      "identity" : "median.median-icons",
+      "kind" : "registry",
+      "location" : "",
+      "state" : {
+        "version" : "1.1.4"
+      }
+    },
+    {
+      "identity" : "median.one-signal-plugin",
+      "kind" : "registry",
+      "location" : "",
+      "state" : {
+        "version" : "1.2.0"
+      }
+    },
+    {
+      "identity" : "onesignal-xcframework",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/OneSignal/OneSignal-XCFramework",
+      "state" : {
+        "revision" : "fb5b9f51b7142f534f6c5bb7e63c5a76a9c1bad4",
+        "version" : "3.12.10"
+      }
+    },
+    {
+      "identity" : "ziparchive",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ZipArchive/ZipArchive",
+      "state" : {
+        "revision" : "df35718ea19a94e015b91dc4881dee028ce4cdba",
+        "version" : "2.6.0"
+      }
+    }
+  ],
+  "version" : 3
+}

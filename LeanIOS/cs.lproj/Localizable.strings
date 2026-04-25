@@ -1,0 +1,23 @@
+/* iOS Button: Cancel */
+"button-cancel" = "Zrušení";
+
+/* Button: Done */
+"button-done" = "Hotovo";
+
+/* iOS Button: OK */
+"button-ok" = "OK";
+
+/* iOS Button: View */
+"button-view" = "Pohled";
+
+/* iOS Button: Menu */
+"button-menu" = "Menu";
+
+/* Button: Copy Link */
+"button-copy-link" = "Kopírovat adresu odkazu";
+
+/* Button: Open External */
+"button-open-external" = "Otevřít odkaz ve vnějším prohlížeči";
+
+/* Button: Share External */
+"button-share-link" = "Sdílet odkaz";

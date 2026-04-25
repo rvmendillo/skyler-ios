@@ -1,0 +1,20 @@
+/* iOS Button: Cancel */
+"button-cancel" = "取消";
+
+/* iOS Button: OK */
+"button-ok" = "好的";
+
+/* iOS Button: View */
+"button-view" = "查看";
+
+/* iOS Button: Menu */
+"button-menu" = "菜單";
+
+/* Button: Copy Link */
+"button-copy-link" = "複製連結位址";
+
+/* Button: Open External */
+"button-open-external" = "用外部瀏覽器開啟連結";
+
+/* Button: Share External */
+"button-share-link" = "分享連結";

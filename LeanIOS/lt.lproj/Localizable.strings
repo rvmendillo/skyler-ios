@@ -1,0 +1,20 @@
+/* Button: Cancel */
+"button-cancel" = "Atšaukti";
+
+/* Button: OK */
+"button-ok" = "OK";
+
+/* Button: View */
+"button-view" = "Žiūrėti";
+
+/* Button: Menu */
+"button-menu" = "Meniu";
+
+/* Button: Copy Link */
+"button-copy-link" = "Nukopijuokite nuorodos adresą";
+
+/* Button: Open External */
+"button-open-external" = "Atidaryti nuorodą išorinėje naršyklėje";
+
+/* Button: Share External */
+"button-share-link" = "Dalytis nuoroda";
