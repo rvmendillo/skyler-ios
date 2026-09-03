@@ -75,7 +75,8 @@ final class ChartMakerModel: ObservableObject {
                     self.status = "Exact score loaded • rendering \(self.selectedInstrumentName)…"
                     try await self.renderScoreWithCurrentSoundFont()
                 } else {
-                    self.status = "Exact MIDI/MusicXML timing loaded • \(self.charts.count) charts ready. Load an SF2/DLS bank to render track audio."
+                    self.status = "Exact score loaded • rendering built-in piano…"
+                    try await self.renderScoreWithDefaultPiano()
                 }
             }
         }
@@ -101,7 +102,11 @@ final class ChartMakerModel: ObservableObject {
     func renderScoreAudio() {
         Task {
             await perform {
-                try await self.renderScoreWithCurrentSoundFont()
+                if self.soundFontURL != nil {
+                    try await self.renderScoreWithCurrentSoundFont()
+                } else {
+                    try await self.renderScoreWithDefaultPiano()
+                }
             }
         }
     }
@@ -173,6 +178,28 @@ final class ChartMakerModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func renderScoreWithDefaultPiano() async throws {
+        guard let midiURL = scoreMIDIURL else {
+            throw NSError(
+                domain: "MaiChartMaker",
+                code: 43,
+                userInfo: [NSLocalizedDescriptionKey: "Import MIDI or MusicXML first."]
+            )
+        }
+
+        status = "Rendering built-in piano from exact MIDI timing…"
+        let wav = try DefaultMIDIRenderer.renderPiano(midiURL: midiURL)
+
+        status = "Creating 320 kbps AstroDX MP3…"
+        let mp3 = try await AudioPipeline.transcodeToMP3(wav)
+
+        self.analysisAudioURL = wav
+        self.originalAudioURL = wav
+        self.audioURL = mp3
+        self.status = "Exact score timing • built-in piano • AstroDX MP3 ready."
+        prepareExport()
     }
 
     private func renderScoreWithCurrentSoundFont() async throws {
