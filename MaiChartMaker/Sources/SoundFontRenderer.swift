@@ -1,6 +1,5 @@
 import Foundation
 import AVFoundation
-import SwiftMP3
 
 enum SoundFontRendererError: LocalizedError {
     case invalidBank
@@ -34,7 +33,7 @@ enum SoundFontRenderer {
         return target
     }
 
-    static func renderMP3(
+    static func renderWAV(
         midiURL: URL,
         bankURL: URL,
         program: Int
@@ -94,22 +93,16 @@ enum SoundFontRenderer {
         let tailSeconds = 2.0
         let totalFrames = AVAudioFramePosition((sequenceLength + tailSeconds) * sampleRate)
 
+        let wavURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("soundfont-render-\(UUID().uuidString).wav")
+        let file = try AVAudioFile(forWriting: wavURL, settings: format.settings)
+
         guard let buffer = AVAudioPCMBuffer(
             pcmFormat: engine.manualRenderingFormat,
             frameCapacity: maximumFrames
         ) else {
             throw SoundFontRendererError.cannotRender
         }
-
-        let encoder = MP3Encoder(options: MP3EncoderOptions(
-            sampleRate: 48_000,
-            bitrateKbps: 320,
-            vbr: false,
-            mode: .stereo,
-            quality: 0
-        ))
-        var session = encoder.newSession()
-        var encoded = Data()
 
         while engine.manualRenderingSampleTime < totalFrames {
             let remaining = totalFrames - engine.manualRenderingSampleTime
@@ -118,18 +111,7 @@ enum SoundFontRenderer {
             let status = try engine.renderOffline(frames, to: buffer)
             switch status {
             case .success:
-                guard let channels = buffer.floatChannelData else {
-                    throw SoundFontRendererError.cannotRender
-                }
-
-                let count = Int(buffer.frameLength)
-                var interleaved = [Float](repeating: 0, count: count * 2)
-                for i in 0..<count {
-                    interleaved[i * 2] = channels[0][i]
-                    interleaved[i * 2 + 1] = channels[1][i]
-                }
-                encoded.append(session.encode(samples: interleaved))
-
+                try file.write(from: buffer)
             case .cannotDoInCurrentContext:
                 continue
             case .insufficientDataFromInputNode:
@@ -143,16 +125,6 @@ enum SoundFontRenderer {
 
         sequencer.stop()
         engine.stop()
-        encoded.append(session.flush())
-
-        var fileData = Data()
-        fileData.append(session.generateID3Tag())
-        fileData.append(session.generateXingHeader())
-        fileData.append(encoded)
-
-        let out = FileManager.default.temporaryDirectory
-            .appendingPathComponent("soundfont-render-\(UUID().uuidString).mp3")
-        try fileData.write(to: out, options: .atomic)
-        return out
+        return wavURL
     }
 }
