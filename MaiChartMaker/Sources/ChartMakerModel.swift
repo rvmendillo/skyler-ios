@@ -24,6 +24,7 @@ final class ChartMakerModel: ObservableObject {
     @Published var soundFontName = ""
     @Published var selectedProgram = 0
     @Published var waveformComparison: WaveformComparison?
+    @Published var pianoGameNotes: [PianoGameNote] = []
 
     private let pianoPreviewEngine = PianoPreviewEngine()
 
@@ -46,6 +47,7 @@ final class ChartMakerModel: ObservableObject {
                 self.originalAudioURL = imported.originalURL
                 self.scoreMIDIURL = nil
                 self.scoreSourceURL = nil
+                self.pianoGameNotes = []
                 if self.title.isEmpty {
                     self.title = url.deletingPathExtension().lastPathComponent
                 }
@@ -62,6 +64,7 @@ final class ChartMakerModel: ObservableObject {
                 self.analysis = result.analysis
                 self.scoreMIDIURL = result.midiURL
                 self.scoreSourceURL = result.sourceURL
+                self.pianoGameNotes = (try? MIDIPianoGameLoader.load(from: result.midiURL)) ?? []
                 self.audioURL = nil
                 self.analysisAudioURL = nil
                 self.originalAudioURL = nil
@@ -104,11 +107,11 @@ final class ChartMakerModel: ObservableObject {
         }
     }
 
-    func previewNoteOn(_ midiNote: UInt8) {
+    func previewNoteOn(_ midiNote: UInt8, velocity: UInt8 = 105) {
         do {
             try pianoPreviewEngine.play(
                 midiNote: midiNote,
-                velocity: 105,
+                velocity: velocity,
                 soundFontURL: soundFontURL,
                 program: selectedProgram
             )
@@ -150,6 +153,7 @@ final class ChartMakerModel: ObservableObject {
                 self.originalAudioURL = result.originalURL
                 self.scoreMIDIURL = nil
                 self.scoreSourceURL = nil
+                self.pianoGameNotes = []
                 self.title = result.title
                 self.artist = result.artist
                 try await self.analyzeAndGenerate()
