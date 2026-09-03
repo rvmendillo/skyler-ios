@@ -6,7 +6,7 @@ options:
 packages:
   SwiftMP3:
     url: https://github.com/mierau/swift-mp3.git
-    from: 1.0.0
+    revision: da763ee1749ee1e47916ec49915127b82cf179ba
   ZIPFoundation:
     url: https://github.com/weichsel/ZIPFoundation.git
     from: 0.9.19
