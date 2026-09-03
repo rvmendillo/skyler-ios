@@ -1,11 +1,42 @@
 import Foundation
 
+struct TempoPoint: Sendable, Hashable {
+    let beat: Double
+    let bpm: Double
+}
+
 struct AudioAnalysis: Sendable {
     let duration: Double
     let bpm: Double
     let firstBeat: Double
     let onsets: [Double]
     let strengths: [Double]
+    let beatPositions: [Double]?
+    let durationBeats: Double?
+    let tempoMap: [TempoPoint]
+    let exactScoreTiming: Bool
+
+    init(
+        duration: Double,
+        bpm: Double,
+        firstBeat: Double,
+        onsets: [Double],
+        strengths: [Double],
+        beatPositions: [Double]? = nil,
+        durationBeats: Double? = nil,
+        tempoMap: [TempoPoint] = [],
+        exactScoreTiming: Bool = false
+    ) {
+        self.duration = duration
+        self.bpm = bpm
+        self.firstBeat = firstBeat
+        self.onsets = onsets
+        self.strengths = strengths
+        self.beatPositions = beatPositions
+        self.durationBeats = durationBeats
+        self.tempoMap = tempoMap
+        self.exactScoreTiming = exactScoreTiming
+    }
 }
 
 enum ChartDifficulty: Int, CaseIterable, Identifiable, Sendable {
@@ -71,7 +102,35 @@ struct GeneratedChart: Identifiable, Sendable {
 }
 
 enum ImportSource: String, CaseIterable, Identifiable {
-    case file = "Audio File"
+    case file = "Audio"
+    case score = "Score"
     case youtube = "YouTube"
     var id: String { rawValue }
+}
+
+struct GMInstrument: Identifiable, Hashable {
+    let program: Int
+    let name: String
+    var id: Int { program }
+
+    static let popular: [GMInstrument] = [
+        .init(program: 0, name: "Acoustic Grand Piano"),
+        .init(program: 1, name: "Bright Acoustic Piano"),
+        .init(program: 4, name: "Electric Piano"),
+        .init(program: 6, name: "Harpsichord"),
+        .init(program: 16, name: "Drawbar Organ"),
+        .init(program: 24, name: "Nylon Guitar"),
+        .init(program: 25, name: "Steel Guitar"),
+        .init(program: 32, name: "Acoustic Bass"),
+        .init(program: 40, name: "Violin"),
+        .init(program: 42, name: "Cello"),
+        .init(program: 48, name: "String Ensemble"),
+        .init(program: 52, name: "Choir Aahs"),
+        .init(program: 56, name: "Trumpet"),
+        .init(program: 60, name: "French Horn"),
+        .init(program: 64, name: "Soprano Sax"),
+        .init(program: 73, name: "Flute"),
+        .init(program: 80, name: "Square Lead"),
+        .init(program: 88, name: "Fantasia Pad")
+    ]
 }
