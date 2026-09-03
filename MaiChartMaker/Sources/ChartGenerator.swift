@@ -4,6 +4,12 @@ enum ChartGenerator {
     static func generateAll(analysis: AudioAnalysis) -> [GeneratedChart] {
         let generationSeed = UInt64.random(in: UInt64.min...UInt64.max)
         let blueprint = buildBlueprint(analysis: analysis, seed: generationSeed)
+        let remasterEvents = enrichRemaster(
+            blueprint.events,
+            analysis: analysis,
+            totalSteps: blueprint.totalSteps,
+            seed: generationSeed ^ 0xA57D_3C91_F0E1_22B7
+        )
 
         // Strict family inheritance:
         // Re:MASTER -> MASTER -> EXPERT -> ADVANCED -> BASIC -> EASY.
@@ -18,7 +24,7 @@ enum ChartGenerator {
         ]
 
         var family: [ChartDifficulty: [FamilyEvent]] = [:]
-        var parentEvents = blueprint.events
+        var parentEvents = remasterEvents
 
         for difficulty in descending {
             let events: [FamilyEvent]
@@ -91,7 +97,7 @@ enum ChartGenerator {
         case .advanced: base = 6.4
         case .expert: base = 9.2
         case .master: base = 11.4
-        case .remaster: base = 12.5
+        case .remaster: base = 14.0
         }
 
         let tempoBonus = max(0, (analysis.bpm - 110) / 45)
@@ -128,6 +134,8 @@ enum ChartGenerator {
         case double(Int)
         case breakTap
         case slide(destination: Int, duration: String)
+        case centerHold(String)
+        case ring([Int])
     }
 
     private struct FamilyEvent {
@@ -330,38 +338,37 @@ enum ChartGenerator {
                 let score: Double
                 if hasDrums {
                     score =
-                        onset * 0.28 +
-                        drumStrength * 0.82 +
-                        melodyStrength * 0.30 +
+                        onset * 0.22 +
+                        drumStrength * 0.56 +
+                        melodyStrength * 0.74 +
                         quarterAccent +
                         eighthAccent +
                         barAccent
                 } else {
                     score =
-                        onset * 0.73 +
-                        melodyStrength * 0.38 +
+                        onset * 0.52 +
+                        melodyStrength * 0.82 +
                         quarterAccent +
                         eighthAccent +
                         barAccent
                 }
 
                 var candidate =
-                    score + rng.double(in: -0.055...0.075) >= 0.36
+                    score + rng.double(in: -0.045...0.085) >= 0.31
 
-                if drumStrength >= 0.48 {
+                if drumStrength >= 0.55 {
                     candidate = true
                 }
 
                 if hasMelody,
-                   melodyStrength >= 0.78,
-                   sixteenth != 1 || rng.chance(0.7) {
+                   melodyStrength >= 0.36 {
                     candidate = true
                 }
 
                 if step >= restStart,
                    step < restEnd,
                    drumStrength < 0.72,
-                   melodyStrength < 0.82 {
+                   melodyStrength < 0.50 {
                     candidate = false
                 }
 
@@ -737,9 +744,9 @@ enum ChartGenerator {
         return min(
             1,
             beatWeight +
-            onset * 0.17 +
-            drumStrength * 0.39 +
-            melodyStrength * 0.19 +
+            onset * 0.13 +
+            drumStrength * 0.28 +
+            melodyStrength * 0.38 +
             intervalWeight +
             stableNoise
         )
