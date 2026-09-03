@@ -52,8 +52,8 @@ struct ContentView: View {
                     TextField("Title", text: $model.title)
                     TextField("Artist", text: $model.artist)
                     if let analysis = model.analysis {
-                        LabeledContent("Tempo", value: "\(analysis.bpm, specifier: "%.1f") BPM")
-                        LabeledContent("Offset", value: "\(analysis.firstBeat, specifier: "%.3f") s")
+                        LabeledContent("Tempo", value: String(format: "%.1f BPM", analysis.bpm))
+                        LabeledContent("Offset", value: String(format: "%.3f s", analysis.firstBeat))
                         LabeledContent("Onsets", value: "\(analysis.onsets.count)")
                         LabeledContent("Duration", value: durationString(analysis.duration))
                     }
