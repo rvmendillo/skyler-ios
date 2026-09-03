@@ -1,0 +1,46 @@
+name: MaiChartMaker
+options:
+  bundleIdPrefix: com.rvmendillo
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  SwiftMP3:
+    url: https://github.com/mierau/swift-mp3.git
+    from: 1.0.0
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation.git
+    from: 0.9.19
+targets:
+  MaiChartMaker:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    dependencies:
+      - package: SwiftMP3
+      - package: ZIPFoundation
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rvmendillo.maichartmaker
+        PRODUCT_NAME: MaiChartMaker
+        SWIFT_VERSION: 5.10
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+        CODE_SIGN_STYLE: Automatic
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: MaiChart Maker
+        UILaunchScreen: {}
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UIApplicationSupportsIndirectInputEvents: true
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: false
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Audio
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.mp3
+              - public.mpeg-4-audio
+              - public.audio
