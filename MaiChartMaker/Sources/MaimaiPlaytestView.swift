@@ -16,6 +16,7 @@ private struct MaimaiPreviewEvent: Identifiable {
     let time: Double
     let lanes: [Int]
     let kind: MaimaiPreviewKind
+    let holdDuration: Double
 }
 
 private enum SimaiPreviewParser {
@@ -58,7 +59,8 @@ private enum SimaiPreviewParser {
             if !token.isEmpty {
                 if let event = event(
                     from: token,
-                    time: time
+                    time: time,
+                    bpm: bpm
                 ) {
                     output.append(event)
                 }
@@ -100,15 +102,20 @@ private enum SimaiPreviewParser {
 
     private static func event(
         from token: String,
-        time: Double
+        time: Double,
+        bpm: Double
     ) -> MaimaiPreviewEvent? {
         let cleaned = token.trimmingCharacters(in: .whitespaces)
 
         if cleaned.hasPrefix("C") {
+            let isHold = cleaned.contains("h[")
             return MaimaiPreviewEvent(
                 time: time,
                 lanes: [],
-                kind: cleaned.contains("h[") ? .touchHold : .touch
+                kind: isHold ? .touchHold : .touch,
+                holdDuration: isHold
+                    ? durationSeconds(from: cleaned, bpm: bpm)
+                    : 0
             )
         }
 
@@ -122,7 +129,8 @@ private enum SimaiPreviewParser {
             return MaimaiPreviewEvent(
                 time: time,
                 lanes: lanes,
-                kind: .tap
+                kind: .tap,
+                holdDuration: 0
             )
         }
 
@@ -134,7 +142,8 @@ private enum SimaiPreviewParser {
                 return MaimaiPreviewEvent(
                     time: time,
                     lanes: [start],
-                    kind: .slide(destination: destination)
+                    kind: .slide(destination: destination),
+                    holdDuration: 0
                 )
             }
         }
@@ -147,7 +156,8 @@ private enum SimaiPreviewParser {
             return MaimaiPreviewEvent(
                 time: time,
                 lanes: [lane],
-                kind: .hold
+                kind: .hold,
+                holdDuration: durationSeconds(from: token, bpm: bpm)
             )
         }
 
@@ -155,15 +165,44 @@ private enum SimaiPreviewParser {
             return MaimaiPreviewEvent(
                 time: time,
                 lanes: [lane],
-                kind: .breakTap
+                kind: .breakTap,
+                holdDuration: 0
             )
         }
 
         return MaimaiPreviewEvent(
             time: time,
             lanes: [lane],
-            kind: .tap
+            kind: .tap,
+            holdDuration: 0
         )
+    }
+
+    private static func durationSeconds(
+        from token: String,
+        bpm: Double
+    ) -> Double {
+        guard
+            let open = token.firstIndex(of: "["),
+            let close = token[open...].firstIndex(of: "]"),
+            open < close
+        else {
+            return 60.0 / max(1, bpm)
+        }
+
+        let body = token[token.index(after: open)..<close]
+        let parts = body.split(separator: ":")
+
+        guard
+            parts.count == 2,
+            let division = Double(parts[0]),
+            let count = Double(parts[1]),
+            division > 0
+        else {
+            return 60.0 / max(1, bpm)
+        }
+
+        return (60.0 / max(1, bpm)) * (4.0 / division) * count
     }
 
     private static func lane(from token: String) -> Int? {
@@ -349,8 +388,19 @@ struct MaimaiPlaytestView: View {
                         }
 
                         if event.lanes.isEmpty {
-                            centerPreviewNote(event.kind, progress: progress)
-                                .position(center)
+                            let holdRemaining =
+                                centerHoldRemainingFraction(event)
+                            let remainingSeconds =
+                                centerHoldRemainingSeconds(event)
+
+                            centerPreviewNote(
+                                event.kind,
+                                approachProgress: progress,
+                                holdRemaining: holdRemaining,
+                                remainingSeconds: remainingSeconds
+                            )
+                            .position(center)
+                            .zIndex(6)
                         } else {
                             ForEach(
                                 Array(event.lanes.enumerated()),
@@ -512,7 +562,7 @@ struct MaimaiPlaytestView: View {
             lastTick = now
 
             if let last = events.last,
-               elapsed > last.time + 1.0 {
+               elapsed > last.time + max(1.0, last.holdDuration + 0.25) {
                 pause()
             }
         }
@@ -534,11 +584,55 @@ struct MaimaiPlaytestView: View {
     }
 
     private var visibleEvents: [MaimaiPreviewEvent] {
-        events.filter {
-            let delta = $0.time - elapsed
+        events.filter { event in
+            let delta = event.time - elapsed
+
+            if case .touchHold = event.kind {
+                return delta <= approachTime &&
+                       elapsed <= event.time + max(0.12, event.holdDuration)
+            }
+
+            if case .hold = event.kind {
+                return delta <= approachTime &&
+                       elapsed <= event.time + max(0.12, event.holdDuration)
+            }
+
             return delta <= approachTime &&
                    delta >= -0.12
         }
+    }
+
+    private func centerHoldRemainingFraction(
+        _ event: MaimaiPreviewEvent
+    ) -> Double {
+        guard event.holdDuration > 0 else { return 0 }
+
+        if elapsed <= event.time {
+            return 1
+        }
+
+        return max(
+            0,
+            min(
+                1,
+                1 - (elapsed - event.time) / event.holdDuration
+            )
+        )
+    }
+
+    private func centerHoldRemainingSeconds(
+        _ event: MaimaiPreviewEvent
+    ) -> Double {
+        guard event.holdDuration > 0 else { return 0 }
+
+        if elapsed <= event.time {
+            return event.holdDuration
+        }
+
+        return max(
+            0,
+            event.time + event.holdDuration - elapsed
+        )
     }
 
     @ViewBuilder
@@ -548,14 +642,20 @@ struct MaimaiPlaytestView: View {
         switch kind {
         case .tap:
             Circle()
-                .fill(
-                    ArcadePalette.difficulty(difficulty)
+                .fill(ArcadePalette.pink)
+                .overlay(
+                    Circle()
+                        .stroke(
+                            ArcadePalette.difficulty(difficulty),
+                            lineWidth: 2
+                        )
                 )
                 .overlay(
                     Circle()
-                        .stroke(.white, lineWidth: 3)
+                        .stroke(.white.opacity(0.88), lineWidth: 1)
+                        .padding(4)
                 )
-                .frame(width: 28, height: 28)
+                .frame(width: 29, height: 29)
 
         case .breakTap:
             ZStack {
@@ -595,29 +695,42 @@ struct MaimaiPlaytestView: View {
     @ViewBuilder
     private func centerPreviewNote(
         _ kind: MaimaiPreviewKind,
-        progress: Double
+        approachProgress: Double,
+        holdRemaining: Double,
+        remainingSeconds: Double
     ) -> some View {
         switch kind {
         case .touchHold:
             ZStack {
                 Circle()
                     .stroke(
-                        ArcadePalette.aqua.opacity(0.28),
+                        ArcadePalette.aqua.opacity(0.22),
                         lineWidth: 12
                     )
-                    .frame(width: 92, height: 92)
+                    .frame(width: 98, height: 98)
 
+                // Before the hit, the ring is full. Once the touch-hold
+                // begins it closes clockwise according to the real Ch[]
+                // duration parsed from simai.
                 Circle()
-                    .trim(from: 0, to: max(0.08, progress))
+                    .trim(
+                        from: 0,
+                        to: max(
+                            0.015,
+                            approachProgress < 1.0
+                                ? 1.0
+                                : holdRemaining
+                        )
+                    )
                     .stroke(
                         ArcadePalette.pink,
                         style: StrokeStyle(
-                            lineWidth: 7,
+                            lineWidth: 8,
                             lineCap: .round
                         )
                     )
                     .rotationEffect(.degrees(-90))
-                    .frame(width: 78, height: 78)
+                    .frame(width: 82, height: 82)
 
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(
@@ -633,9 +746,29 @@ struct MaimaiPlaytestView: View {
                     .frame(width: 58, height: 58)
                     .rotationEffect(.degrees(45))
 
-                Text("HOLD")
-                    .font(.system(size: 9, weight: .black, design: .rounded))
-                    .foregroundStyle(.white)
+                VStack(spacing: 1) {
+                    Text("HOLD")
+                        .font(.system(
+                            size: 9,
+                            weight: .black,
+                            design: .rounded
+                        ))
+
+                    if remainingSeconds > 0 {
+                        Text(
+                            String(
+                                format: "%.1f",
+                                remainingSeconds
+                            )
+                        )
+                        .font(.system(
+                            size: 13,
+                            weight: .black,
+                            design: .rounded
+                        ))
+                    }
+                }
+                .foregroundStyle(.white)
             }
 
         case .touch:
