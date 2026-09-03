@@ -25,8 +25,10 @@ final class ChartMakerModel: ObservableObject {
     @Published var selectedProgram = 0
     @Published var waveformComparison: WaveformComparison?
     @Published var pianoGameNotes: [PianoGameNote] = []
+    @Published var syncOffsetMilliseconds: Double = 0
 
     private let pianoPreviewEngine = PianoPreviewEngine()
+    private var detectedFirstBeat: Double = 0
 
     var hasExactScoreTiming: Bool {
         analysis?.exactScoreTiming == true
@@ -48,6 +50,7 @@ final class ChartMakerModel: ObservableObject {
                 self.scoreMIDIURL = nil
                 self.scoreSourceURL = nil
                 self.pianoGameNotes = []
+                self.syncOffsetMilliseconds = 0
                 if self.title.isEmpty {
                     self.title = url.deletingPathExtension().lastPathComponent
                 }
@@ -62,6 +65,8 @@ final class ChartMakerModel: ObservableObject {
                 self.status = "Reading exact score timing…"
                 let result = try ScorePipeline.importScore(url)
                 self.analysis = result.analysis
+                self.detectedFirstBeat = result.analysis.firstBeat
+                self.syncOffsetMilliseconds = 0
                 self.scoreMIDIURL = result.midiURL
                 self.scoreSourceURL = result.sourceURL
                 self.pianoGameNotes = (try? MIDIPianoGameLoader.load(from: result.midiURL)) ?? []
@@ -133,6 +138,46 @@ final class ChartMakerModel: ObservableObject {
         }
     }
 
+    func adjustSyncOffset(by milliseconds: Double) {
+        guard let current = analysis else { return }
+
+        syncOffsetMilliseconds = min(
+            750,
+            max(-750, syncOffsetMilliseconds + milliseconds)
+        )
+
+        analysis = current.replacingFirstBeat(
+            detectedFirstBeat + syncOffsetMilliseconds / 1000.0
+        )
+
+        status = String(
+            format:
+                "Audio/chart sync %+.0f ms • exported first-beat offset %.3fs.",
+            syncOffsetMilliseconds,
+            analysis?.firstBeat ?? 0
+        )
+
+        if audioURL != nil {
+            prepareExport()
+        }
+    }
+
+    func resetSyncOffset() {
+        guard let current = analysis else { return }
+        syncOffsetMilliseconds = 0
+        analysis = current.replacingFirstBeat(detectedFirstBeat)
+
+        status = String(
+            format:
+                "Restored auto-detected chart offset • first beat %.3fs.",
+            detectedFirstBeat
+        )
+
+        if audioURL != nil {
+            prepareExport()
+        }
+    }
+
     func renderScoreAudio() {
         Task {
             await perform {
@@ -156,6 +201,7 @@ final class ChartMakerModel: ObservableObject {
                 self.scoreMIDIURL = nil
                 self.scoreSourceURL = nil
                 self.pianoGameNotes = []
+                self.syncOffsetMilliseconds = 0
                 self.title = result.title
                 self.artist = result.artist
                 try await self.analyzeAndGenerate()
@@ -255,7 +301,7 @@ final class ChartMakerModel: ObservableObject {
         )
 
         self.analysisAudioURL = wav
-        self.originalAudioURL = wav
+        self.originalAudioURL = nil
         self.audioURL = mp3
         self.waveformComparison = comparison
         self.status =
@@ -314,6 +360,8 @@ final class ChartMakerModel: ObservableObject {
         let analyzed = try await AudioPipeline.analyzeWithTranscription(source)
 
         self.analysis = analyzed.analysis
+        self.detectedFirstBeat = analyzed.analysis.firstBeat
+        self.syncOffsetMilliseconds = 0
         self.pianoGameNotes = analyzed.pianoGameNotes
         self.charts = ChartGenerator.generateAll(
             analysis: analyzed.analysis
