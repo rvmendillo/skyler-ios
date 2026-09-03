@@ -12,6 +12,8 @@ final class ChartMakerModel: ObservableObject {
     @Published var analysis: AudioAnalysis?
     @Published var charts: [GeneratedChart] = []
     @Published var audioURL: URL?
+    @Published var analysisAudioURL: URL?
+    @Published var originalAudioURL: URL?
     @Published var exportZipURL: URL?
     @Published var preparedSongFolder: URL?
     @Published var errorMessage: String?
@@ -20,8 +22,10 @@ final class ChartMakerModel: ObservableObject {
         Task {
             await perform {
                 self.status = "Preparing audio…"
-                let mp3 = try await AudioPipeline.importLocal(url)
-                self.audioURL = mp3
+                let imported = try await AudioPipeline.importLocal(url)
+                self.audioURL = imported.exportURL
+                self.analysisAudioURL = imported.analysisURL
+                self.originalAudioURL = imported.originalURL
                 if self.title.isEmpty {
                     self.title = url.deletingPathExtension().lastPathComponent
                 }
@@ -35,7 +39,9 @@ final class ChartMakerModel: ObservableObject {
             await perform {
                 self.status = "Resolving YouTube audio…"
                 let result = try await AudioPipeline.importYouTube(self.youtubeURL)
-                self.audioURL = result.downloadedURL
+                self.audioURL = result.exportURL
+                self.analysisAudioURL = result.analysisURL
+                self.originalAudioURL = result.originalURL
                 self.title = result.title
                 self.artist = result.artist
                 try await self.analyzeAndGenerate()
@@ -68,7 +74,8 @@ final class ChartMakerModel: ObservableObject {
                 artist: artist,
                 audioURL: audioURL,
                 analysis: analysis,
-                charts: charts
+                charts: charts,
+                originalAudioURL: originalAudioURL
             )
             preparedSongFolder = folder
             exportZipURL = try ChartExporter.makeZip(from: folder)
@@ -88,9 +95,9 @@ final class ChartMakerModel: ObservableObject {
     }
 
     private func analyzeAndGenerate() async throws {
-        guard let audioURL else { return }
-        status = "Detecting tempo, beats and onsets…"
-        let analysis = try await AudioPipeline.analyze(audioURL)
+        guard let source = analysisAudioURL ?? audioURL else { return }
+        status = "Detecting tempo, beats and onsets from original audio…"
+        let analysis = try await AudioPipeline.analyze(source)
         self.analysis = analysis
         self.charts = ChartGenerator.generateAll(analysis: analysis)
         status = "Detected \(String(format: "%.1f", analysis.bpm)) BPM • generated \(charts.count) charts."
