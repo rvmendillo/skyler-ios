@@ -23,7 +23,7 @@ struct ContentView: View {
                             songCard
                         }
 
-                        if model.scoreMIDIURL != nil {
+                        if model.scoreMIDIURL != nil || !model.pianoGameNotes.isEmpty {
                             soundFontCard
                         }
 
@@ -231,7 +231,7 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(model.selectedInstrumentName)
                                 .font(.system(.subheadline, design: .rounded, weight: .bold))
-                            Text("Built-in renderer • no SoundFont required")
+                            Text("Apple Sampler • GeneralUser GS built in")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -313,16 +313,18 @@ struct ContentView: View {
                         .stroke(ArcadePalette.purple.opacity(0.12), lineWidth: 1)
                 )
 
-                Button {
-                    model.renderScoreAudio()
-                } label: {
-                    Label(
-                        "Render \(model.selectedInstrumentName) MP3",
-                        systemImage: "waveform.badge.plus"
-                    )
+                if model.scoreMIDIURL != nil {
+                    Button {
+                        model.renderScoreAudio()
+                    } label: {
+                        Label(
+                            "Render \(model.selectedInstrumentName) MP3",
+                            systemImage: "waveform.badge.plus"
+                        )
+                    }
+                    .buttonStyle(ArcadePrimaryButtonStyle(colors: [ArcadePalette.cyan, ArcadePalette.purple]))
+                    .disabled(model.isWorking)
                 }
-                .buttonStyle(ArcadePrimaryButtonStyle(colors: [ArcadePalette.cyan, ArcadePalette.purple]))
-                .disabled(model.isWorking)
 
                 if let comparison = model.waveformComparison {
                     VStack(alignment: .leading, spacing: 6) {
@@ -345,7 +347,9 @@ struct ContentView: View {
                     )
                 }
 
-                Text("MIDI/MusicXML render first to a lossless 48 kHz WAV reference, then the native encoder creates a 320 kbps AstroDX MP3. Piano Tiles and Render use the same selected instrument. Load any legally obtained SF2/DLS bank to replace the built-in synth.")
+                Text(model.scoreMIDIURL == nil
+                     ? "MP3/M4A are transcribed on-device with Basic Pitch CoreML. Piano Tiles uses the selected Apple Sampler instrument, while chart generation combines percussive rhythm anchors with melody motion."
+                     : "MIDI/MusicXML render through Apple AVAudioUnitSampler with the bundled GeneralUser GS bank, then LAME creates a 320 kbps MP3. The MP3 is accepted only after the decoded waveform passes the WAV quality gate.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -390,7 +394,7 @@ struct ContentView: View {
                             Text(selectedDifficulty.name)
                                 .font(.system(.headline, design: .rounded, weight: .black))
                                 .foregroundStyle(ArcadePalette.difficulty(selectedDifficulty))
-                            Text(model.hasExactScoreTiming ? "Hierarchical chart family • drum rhythm + melody motion" : "Generated from musical phrases + beat accents")
+                            Text("Hierarchical chart family • drum rhythm + melody motion")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -413,6 +417,26 @@ struct ContentView: View {
                             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                         )
                     }
+
+                    MaimaiPlaytestView(
+                        noteText: chart.noteText,
+                        bpm: model.analysis?.bpm ?? 120,
+                        firstBeat: model.analysis?.firstBeat ?? 0,
+                        audioURL: model.audioURL,
+                        difficulty: selectedDifficulty
+                    )
+                    .padding(12)
+                    .background(
+                        Color.white.opacity(0.72),
+                        in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(
+                                ArcadePalette.difficulty(selectedDifficulty).opacity(0.16),
+                                lineWidth: 1
+                            )
+                    )
 
                     TextEditor(
                         text: Binding(
