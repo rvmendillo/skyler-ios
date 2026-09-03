@@ -4,9 +4,9 @@ options:
   deploymentTarget:
     iOS: "16.0"
 packages:
-  SwiftMP3:
-    url: https://github.com/mierau/swift-mp3.git
-    revision: da763ee1749ee1e47916ec49915127b82cf179ba
+  LAME:
+    url: https://github.com/BB9z/LAME-xcframework.git
+    from: 3.100.3
   ZIPFoundation:
     url: https://github.com/weichsel/ZIPFoundation.git
     from: 0.9.19
@@ -16,8 +16,10 @@ targets:
     platform: iOS
     sources:
       - path: Sources
+    resources:
+      - path: Resources
     dependencies:
-      - package: SwiftMP3
+      - package: LAME
       - package: ZIPFoundation
     settings:
       base:
