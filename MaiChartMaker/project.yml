@@ -16,8 +16,8 @@ targets:
     platform: iOS
     sources:
       - path: Sources
-    resources:
       - path: Resources
+        buildPhase: resources
     dependencies:
       - package: LAME
       - package: ZIPFoundation
