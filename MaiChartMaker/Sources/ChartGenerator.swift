@@ -752,6 +752,65 @@ enum ChartGenerator {
             }
         }
 
+        // A center touch-hold occupies one hand. During its active window,
+        // the free hand may tap or trace a slide, but it should not be asked
+        // to perform an outer two-note chord or another hold.
+        var centerHoldUntilStep = -1
+
+        for index in events.indices {
+            let event = events[index]
+
+            if case .centerHold(let duration) = event.gesture {
+                if event.step < centerHoldUntilStep {
+                    events[index] = FamilyEvent(
+                        step: event.step,
+                        lane: event.lane,
+                        gesture: .tap,
+                        strength: event.strength,
+                        drumStrength: event.drumStrength,
+                        drumNote: event.drumNote,
+                        melodyPitch: event.melodyPitch,
+                        melodyStrength: event.melodyStrength,
+                        melodicInterval: event.melodicInterval,
+                        importance: event.importance,
+                        phrase: event.phrase
+                    )
+                } else {
+                    centerHoldUntilStep =
+                        event.step + holdSteps(duration)
+                }
+                continue
+            }
+
+            guard event.step < centerHoldUntilStep else {
+                continue
+            }
+
+            let needsBothFreeHands: Bool
+            switch event.gesture {
+            case .double, .ring, .hold:
+                needsBothFreeHands = true
+            default:
+                needsBothFreeHands = false
+            }
+
+            if needsBothFreeHands {
+                events[index] = FamilyEvent(
+                    step: event.step,
+                    lane: event.lane,
+                    gesture: .tap,
+                    strength: event.strength,
+                    drumStrength: event.drumStrength,
+                    drumNote: event.drumNote,
+                    melodyPitch: event.melodyPitch,
+                    melodyStrength: event.melodyStrength,
+                    melodicInterval: event.melodicInterval,
+                    importance: event.importance,
+                    phrase: event.phrase
+                )
+            }
+        }
+
         // Cap sustained density while preserving strong melody/drum anchors.
         // Boss sections may still briefly spike above this, but the whole chart
         // stays in a human two-hand range rather than becoming an autoplay map.
@@ -1188,6 +1247,19 @@ enum ChartGenerator {
         }
 
         return count == 0 ? 0 : total / Double(count)
+    }
+
+    private static func holdSteps(_ duration: String) -> Int {
+        switch duration {
+        case "4:2":
+            return 8
+        case "4:1":
+            return 4
+        case "8:1":
+            return 2
+        default:
+            return 4
+        }
     }
 
     private static func isSnare(_ note: UInt8) -> Bool {
