@@ -26,27 +26,12 @@ enum ChartExporter {
             .appendingPathComponent(songFolder.lastPathComponent)
             .appendingPathExtension("zip")
         try? FileManager.default.removeItem(at: zipURL)
-
-        guard let archive = Archive(url: zipURL, accessMode: .create) else {
-            throw CocoaError(.fileWriteUnknown)
-        }
-
-        let parent = songFolder.deletingLastPathComponent()
-        let enumerator = FileManager.default.enumerator(
+        try FileManager.default.zipItem(
             at: songFolder,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
+            to: zipURL,
+            shouldKeepParent: true,
+            compressionMethod: .deflate
         )
-
-        while let file = enumerator?.nextObject() as? URL {
-            let relative = file.path.replacingOccurrences(of: parent.path + "/", with: "")
-            let values = try file.resourceValues(forKeys: [.isDirectoryKey])
-            if values.isDirectory == true {
-                try archive.addEntry(with: relative + "/", type: .directory, uncompressedSize: 0, provider: { _, _ in Data() })
-            } else {
-                try archive.addEntry(with: relative, relativeTo: parent)
-            }
-        }
         return zipURL
     }
 
