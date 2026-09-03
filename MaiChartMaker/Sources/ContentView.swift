@@ -438,6 +438,69 @@ struct ContentView: View {
                             )
                     )
 
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Label(
+                                "AUDIO / CHART SYNC",
+                                systemImage: "metronome.fill"
+                            )
+                            .font(.system(size: 9, weight: .black, design: .rounded))
+                            .foregroundStyle(ArcadePalette.aqua)
+
+                            Spacer()
+
+                            Text(
+                                String(
+                                    format: "%+.0f ms",
+                                    model.syncOffsetMilliseconds
+                                )
+                            )
+                            .font(.system(.caption, design: .rounded, weight: .black))
+                            .foregroundStyle(
+                                abs(model.syncOffsetMilliseconds) < 0.5
+                                    ? .secondary
+                                    : ArcadePalette.pink
+                            )
+                        }
+
+                        HStack(spacing: 6) {
+                            Button("−50") {
+                                model.adjustSyncOffset(by: -50)
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("−10") {
+                                model.adjustSyncOffset(by: -10)
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("Reset") {
+                                model.resetSyncOffset()
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("+10") {
+                                model.adjustSyncOffset(by: 10)
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("+50") {
+                                model.adjustSyncOffset(by: 50)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                        .font(.caption.bold())
+
+                        Text("Auto alignment is estimated from the full-song beat phase. Use these controls only if the hit ring still lands early or late; the same offset is written to AstroDX export.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(10)
+                    .background(
+                        ArcadePalette.aqua.opacity(0.07),
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    )
+
                     TextEditor(
                         text: Binding(
                             get: { model.charts.first(where: { $0.id == chart.id })?.noteText ?? "" },
