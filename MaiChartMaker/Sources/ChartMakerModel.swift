@@ -25,6 +25,8 @@ final class ChartMakerModel: ObservableObject {
     @Published var selectedProgram = 0
     @Published var waveformComparison: WaveformComparison?
 
+    private let pianoPreviewEngine = PianoPreviewEngine()
+
     var hasExactScoreTiming: Bool {
         analysis?.exactScoreTiming == true
     }
@@ -91,6 +93,7 @@ final class ChartMakerModel: ObservableObject {
                 let copied = try SoundFontRenderer.copyBank(url)
                 self.soundFontURL = copied
                 self.soundFontName = url.lastPathComponent
+                self.pianoPreviewEngine.invalidateSoundFont()
 
                 if self.scoreMIDIURL != nil {
                     try await self.renderScoreWithCurrentSoundFont()
@@ -99,6 +102,30 @@ final class ChartMakerModel: ObservableObject {
                 }
             }
         }
+    }
+
+    func previewNoteOn(_ midiNote: UInt8) {
+        do {
+            try pianoPreviewEngine.play(
+                midiNote: midiNote,
+                velocity: 105,
+                soundFontURL: soundFontURL,
+                program: selectedProgram
+            )
+        } catch {
+            errorMessage = "Piano preview failed: \(error.localizedDescription)"
+        }
+    }
+
+    func previewNoteOff(_ midiNote: UInt8) {
+        pianoPreviewEngine.stop(
+            midiNote: midiNote,
+            soundFontURL: soundFontURL
+        )
+    }
+
+    func stopPreviewNotes() {
+        pianoPreviewEngine.stopAll()
     }
 
     func renderScoreAudio() {
