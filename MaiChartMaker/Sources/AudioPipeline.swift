@@ -38,6 +38,11 @@ struct YouTubeMetadata: Sendable {
     let originalURL: URL
 }
 
+struct AnalyzedAudio: Sendable {
+    let analysis: AudioAnalysis
+    let pianoGameNotes: [PianoGameNote]
+}
+
 enum AudioPipeline {
     static func importLocal(_ source: URL) async throws -> ImportedAudio {
         let access = source.startAccessingSecurityScopedResource()
@@ -73,6 +78,10 @@ enum AudioPipeline {
     }
 
     static func analyze(_ source: URL) async throws -> AudioAnalysis {
+        try await analyzeWithTranscription(source).analysis
+    }
+
+    static func analyzeWithTranscription(_ source: URL) async throws -> AnalyzedAudio {
         let asset = AVURLAsset(url: source)
         let durationTime = try await asset.load(.duration)
         let duration = max(0.1, CMTimeGetSeconds(durationTime))
@@ -170,12 +179,70 @@ enum AudioPipeline {
         let firstWindow = onsets.filter { $0.time < min(duration, beat * 2.0) }
         let firstBeat = firstWindow.max(by: { $0.strength < $1.strength })?.time ?? 0.0
 
-        return AudioAnalysis(
+        let rawStrengths = onsets.map(\.strength)
+        let maxStrength = rawStrengths.max() ?? 1
+        let normalizedStrengths = rawStrengths.map {
+            maxStrength > 0 ? min(1, max(0, $0 / maxStrength)) : 0
+        }
+
+        let secondsPerBeat = 60.0 / max(1, bpm)
+        var drumBeats: [Double] = []
+        var drumStrengths: [Double] = []
+
+        for (index, onset) in onsets.enumerated() {
+            let normalized = normalizedStrengths.indices.contains(index)
+                ? normalizedStrengths[index]
+                : 0
+
+            guard normalized >= 0.34 else { continue }
+            guard onset.time >= max(0, firstBeat - 0.08) else { continue }
+
+            let beatPosition =
+                max(0, (onset.time - firstBeat) / secondsPerBeat)
+            drumBeats.append(
+                (beatPosition * 4.0).rounded() / 4.0
+            )
+            drumStrengths.append(normalized)
+        }
+
+        let transcription: AudioTranscriptionResult?
+        do {
+            transcription = try await BasicPitchAudioTranscriber.shared.transcribe(
+                audioURL: source,
+                bpm: bpm,
+                firstBeat: firstBeat
+            )
+        } catch {
+            transcription = nil
+        }
+
+        let durationBeats =
+            max(0.25, (duration - firstBeat) / secondsPerBeat)
+
+        let analysis = AudioAnalysis(
             duration: duration,
             bpm: bpm,
             firstBeat: firstBeat,
             onsets: onsets.map(\.time),
-            strengths: onsets.map(\.strength)
+            strengths: normalizedStrengths,
+            beatPositions: nil,
+            durationBeats: durationBeats,
+            tempoMap: [TempoPoint(beat: 0, bpm: bpm)],
+            exactScoreTiming: false,
+            drumBeatPositions: drumBeats,
+            drumStrengths: drumStrengths,
+            drumNoteNumbers: [],
+            melodyBeatPositions:
+                transcription?.melodyBeatPositions ?? [],
+            melodyPitches:
+                transcription?.melodyPitches ?? [],
+            melodyStrengths:
+                transcription?.melodyStrengths ?? []
+        )
+
+        return AnalyzedAudio(
+            analysis: analysis,
+            pianoGameNotes: transcription?.pianoGameNotes ?? []
         )
     }
 
