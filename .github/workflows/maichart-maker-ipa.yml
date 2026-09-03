@@ -32,7 +32,8 @@ jobs:
         working-directory: MaiChartMaker
         run: |
           rm -rf .ffmpeg-kit
-          git clone --depth 1 https://github.com/jaywcjlove/ffmpeg-kit.git .ffmpeg-kit
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/jaywcjlove/ffmpeg-kit.git .ffmpeg-kit
+          git -C .ffmpeg-kit sparse-checkout set Frameworks
 
       - name: Generate Xcode project
         working-directory: MaiChartMaker
