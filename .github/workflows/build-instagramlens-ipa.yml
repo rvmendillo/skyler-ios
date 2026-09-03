@@ -1,0 +1,68 @@
+name: Build InstagramLens IPA
+
+on:
+  push:
+    branches:
+      - instagram-wrapper
+    paths:
+      - "InstagramLens/**"
+      - ".github/workflows/build-instagramlens-ipa.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode project
+        working-directory: InstagramLens
+        run: xcodegen generate
+
+      - name: Build unsigned iPhone app
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project InstagramLens/InstagramLens.xcodeproj \
+            -scheme InstagramLens \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath "$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
+
+      - name: Package IPA
+        run: |
+          APP="$PWD/build/Build/Products/Release-iphoneos/InstagramLens.app"
+          test -d "$APP"
+          rm -rf Payload InstagramLens-unsigned.ipa
+          mkdir Payload
+          cp -R "$APP" Payload/
+          /usr/bin/zip -qry InstagramLens-unsigned.ipa Payload
+          ls -lh InstagramLens-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: InstagramLens-IPA
+          path: InstagramLens-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
