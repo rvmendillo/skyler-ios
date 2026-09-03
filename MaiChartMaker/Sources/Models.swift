@@ -15,6 +15,12 @@ struct AudioAnalysis: Sendable {
     let durationBeats: Double?
     let tempoMap: [TempoPoint]
     let exactScoreTiming: Bool
+    let drumBeatPositions: [Double]
+    let drumStrengths: [Double]
+    let drumNoteNumbers: [UInt8]
+    let melodyBeatPositions: [Double]
+    let melodyPitches: [UInt8]
+    let melodyStrengths: [Double]
 
     init(
         duration: Double,
@@ -25,7 +31,13 @@ struct AudioAnalysis: Sendable {
         beatPositions: [Double]? = nil,
         durationBeats: Double? = nil,
         tempoMap: [TempoPoint] = [],
-        exactScoreTiming: Bool = false
+        exactScoreTiming: Bool = false,
+        drumBeatPositions: [Double] = [],
+        drumStrengths: [Double] = [],
+        drumNoteNumbers: [UInt8] = [],
+        melodyBeatPositions: [Double] = [],
+        melodyPitches: [UInt8] = [],
+        melodyStrengths: [Double] = []
     ) {
         self.duration = duration
         self.bpm = bpm
@@ -36,6 +48,12 @@ struct AudioAnalysis: Sendable {
         self.durationBeats = durationBeats
         self.tempoMap = tempoMap
         self.exactScoreTiming = exactScoreTiming
+        self.drumBeatPositions = drumBeatPositions
+        self.drumStrengths = drumStrengths
+        self.drumNoteNumbers = drumNoteNumbers
+        self.melodyBeatPositions = melodyBeatPositions
+        self.melodyPitches = melodyPitches
+        self.melodyStrengths = melodyStrengths
     }
 }
 
