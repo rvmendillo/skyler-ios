@@ -10,13 +10,13 @@ final class PianoPreviewEngine {
 
     private var loadedBankURL: URL?
     private var loadedProgram: Int?
-    private var builtInBuffers: [UInt8: AVAudioPCMBuffer] = [:]
+    private var builtInBuffers: [Int: AVAudioPCMBuffer] = [:]
 
     init() {
         engine.attach(sampler)
         engine.connect(sampler, to: engine.mainMixerNode, format: nil)
 
-        for _ in 0..<10 {
+        for _ in 0..<6 {
             let player = AVAudioPlayerNode()
             players.append(player)
             engine.attach(player)
@@ -36,15 +36,20 @@ final class PianoPreviewEngine {
             try ensureSoundFont(soundFontURL, program: program)
             sampler.startNote(midiNote, withVelocity: velocity, onChannel: 0)
         } else {
-            let buffer = builtInBuffers[midiNote] ?? makeBuiltInPianoBuffer(note: midiNote)
-            builtInBuffers[midiNote] = buffer
+            let key = (program << 8) | Int(midiNote)
+            let buffer = builtInBuffers[key] ?? makeBuiltInBuffer(
+                note: midiNote,
+                velocity: velocity,
+                program: program
+            )
+            builtInBuffers[key] = buffer
 
             guard !players.isEmpty else { return }
             let player = players[nextPlayer % players.count]
             nextPlayer = (nextPlayer + 1) % players.count
 
             player.stop()
-            player.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
+            player.scheduleBuffer(buffer, at: nil, options: .interrupts)
             player.play()
         }
     }
@@ -64,6 +69,11 @@ final class PianoPreviewEngine {
 
     func invalidateSoundFont() {
         loadedBankURL = nil
+        loadedProgram = nil
+    }
+
+    func instrumentChanged() {
+        stopAll()
         loadedProgram = nil
     }
 
@@ -94,9 +104,14 @@ final class PianoPreviewEngine {
         loadedProgram = program
     }
 
-    private func makeBuiltInPianoBuffer(note: UInt8) -> AVAudioPCMBuffer {
+    private func makeBuiltInBuffer(
+        note: UInt8,
+        velocity: UInt8,
+        program: Int
+    ) -> AVAudioPCMBuffer {
         let sampleRate = 48_000.0
-        let duration = 1.65
+        let noteDuration = 0.78
+        let duration = noteDuration + BuiltInInstrumentSynth.tailDuration(program: program)
         let frames = AVAudioFrameCount(duration * sampleRate)
         let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -112,31 +127,20 @@ final class PianoPreviewEngine {
         let pan = max(-0.42, min(0.42, (Double(note) - 60.0) / 48.0))
         let leftGain = sqrt((1.0 - pan) * 0.5)
         let rightGain = sqrt((1.0 + pan) * 0.5)
+        let normalizedVelocity = max(0.08, Double(velocity) / 127.0)
 
         let left = buffer.floatChannelData![0]
         let right = buffer.floatChannelData![1]
 
         for frame in 0..<Int(frames) {
             let t = Double(frame) / sampleRate
-            let attack = min(1.0, t / 0.006)
-            let decay = 0.19 + 0.81 * exp(-max(0, t - 0.006) / 1.45)
-            let release = t > 0.72 ? exp(-(t - 0.72) / 0.82) : 1.0
-            let envelope = attack * decay * release
-
-            let phase = 2.0 * Double.pi * frequency * t
-            let hammer = exp(-t * 30.0)
-
-            var sample =
-                sin(phase) * 1.00 +
-                sin(phase * 2.0) * 0.42 +
-                sin(phase * 3.0) * 0.18 +
-                sin(phase * 4.0) * 0.08 +
-                sin(phase * 5.0) * 0.035
-
-            sample += sin(phase * 7.03) * 0.10 * hammer
-            sample += sin(phase * 11.11) * 0.045 * hammer
-
-            let value = tanh(sample * 0.105 * envelope * 1.15) * 0.88
+            let value = BuiltInInstrumentSynth.sample(
+                frequency: frequency,
+                time: t,
+                noteDuration: noteDuration,
+                velocity: normalizedVelocity,
+                program: program
+            )
             left[frame] = Float(value * leftGain)
             right[frame] = Float(value * rightGain)
         }
