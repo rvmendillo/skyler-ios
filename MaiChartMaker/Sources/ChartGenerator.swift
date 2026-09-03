@@ -98,21 +98,40 @@ enum ChartGenerator {
         var rng = SplitMix64(seed: seed)
         let bpm = max(1, analysis.bpm)
         let secondsPerStep = 60.0 / bpm / 4.0
-        let totalSteps = max(
-            1,
-            Int(ceil(max(0, analysis.duration - analysis.firstBeat) / secondsPerStep))
-        )
+
+        let totalSteps: Int
+        if analysis.exactScoreTiming, let durationBeats = analysis.durationBeats {
+            totalSteps = max(1, Int(ceil(durationBeats * 4.0)))
+        } else {
+            totalSteps = max(
+                1,
+                Int(ceil(max(0, analysis.duration - analysis.firstBeat) / secondsPerStep))
+            )
+        }
 
         let normalizedStrengths = normalize(analysis.strengths)
         var onsetByStep: [Int: Double] = [:]
 
-        for (index, onset) in analysis.onsets.enumerated() where onset >= analysis.firstBeat {
-            let step = Int(((onset - analysis.firstBeat) / secondsPerStep).rounded())
-            guard step >= 0 && step < totalSteps else { continue }
-            let strength = normalizedStrengths.indices.contains(index)
-                ? normalizedStrengths[index]
-                : 0.5
-            onsetByStep[step] = max(onsetByStep[step] ?? 0, strength)
+        if analysis.exactScoreTiming,
+           let beats = analysis.beatPositions,
+           beats.count == analysis.onsets.count {
+            for (index, beat) in beats.enumerated() {
+                let step = Int((beat * 4.0).rounded())
+                guard step >= 0 && step < totalSteps else { continue }
+                let strength = normalizedStrengths.indices.contains(index)
+                    ? normalizedStrengths[index]
+                    : 0.5
+                onsetByStep[step] = max(onsetByStep[step] ?? 0, strength)
+            }
+        } else {
+            for (index, onset) in analysis.onsets.enumerated() where onset >= analysis.firstBeat {
+                let step = Int(((onset - analysis.firstBeat) / secondsPerStep).rounded())
+                guard step >= 0 && step < totalSteps else { continue }
+                let strength = normalizedStrengths.indices.contains(index)
+                    ? normalizedStrengths[index]
+                    : 0.5
+                onsetByStep[step] = max(onsetByStep[step] ?? 0, strength)
+            }
         }
 
         let phraseLength = 64 // four 4/4 bars at 16th-note resolution
@@ -253,8 +272,21 @@ enum ChartGenerator {
             }
         }
 
+        var tempoByStep: [Int: Double] = [:]
+        if analysis.exactScoreTiming {
+            for point in analysis.tempoMap.dropFirst() {
+                let step = Int((point.beat * 4.0).rounded())
+                if step >= 0 && step < tokens.count {
+                    tempoByStep[step] = point.bpm
+                }
+            }
+        }
+
         var body = "(\(String(format: "%.3f", bpm))){16},\n"
         for i in tokens.indices {
+            if let changedBPM = tempoByStep[i] {
+                body += "(\(String(format: "%.3f", changedBPM)))"
+            }
             body += tokens[i]
             body += ","
             if (i + 1) % 16 == 0 { body += "\n" }
