@@ -1,10 +1,11 @@
 import Foundation
+import AVFoundation
 import AudioToolbox
-import SwiftMP3
 
 enum DefaultMIDIRendererError: LocalizedError {
     case invalidMIDI(OSStatus)
     case noNotes
+    case cannotCreateBuffer
 
     var errorDescription: String? {
         switch self {
@@ -12,6 +13,8 @@ enum DefaultMIDIRendererError: LocalizedError {
             return "The MIDI file could not be rendered (AudioToolbox status \(status))."
         case .noNotes:
             return "The score contains no playable MIDI notes."
+        case .cannotCreateBuffer:
+            return "Could not create the default instrument audio buffer."
         }
     }
 }
@@ -27,24 +30,34 @@ private struct RenderNote {
 }
 
 enum DefaultMIDIRenderer {
-    static func renderPianoMP3(midiURL: URL) throws -> URL {
+    static func renderPianoWAV(midiURL: URL) throws -> URL {
         let notes = try readNotes(midiURL)
         guard !notes.isEmpty else { throw DefaultMIDIRendererError.noNotes }
 
-        let sampleRate = 48_000
+        let sampleRate = 48_000.0
         let blockFrames = 2048
         let totalDuration = (notes.map(\.end).max() ?? 0) + 0.35
-        let totalFrames = Int64(ceil(totalDuration * Double(sampleRate)))
+        let totalFrames = Int64(ceil(totalDuration * sampleRate))
 
-        let encoder = MP3Encoder(options: MP3EncoderOptions(
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
             sampleRate: sampleRate,
-            bitrateKbps: 320,
-            vbr: false,
-            mode: .stereo,
-            quality: 0
-        ))
-        var session = encoder.newSession()
-        var encoded = Data()
+            channels: 2,
+            interleaved: false
+        ) else {
+            throw DefaultMIDIRendererError.cannotCreateBuffer
+        }
+
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("default-piano-\(UUID().uuidString).wav")
+        let file = try AVAudioFile(forWriting: out, settings: format.settings)
+
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: AVAudioFrameCount(blockFrames)
+        ) else {
+            throw DefaultMIDIRendererError.cannotCreateBuffer
+        }
 
         let sorted = notes.sorted { $0.start < $1.start }
         var nextIndex = 0
@@ -53,8 +66,8 @@ enum DefaultMIDIRenderer {
 
         while framePosition < totalFrames {
             let framesThisBlock = Int(min(Int64(blockFrames), totalFrames - framePosition))
-            let blockStart = Double(framePosition) / Double(sampleRate)
-            let blockEnd = Double(framePosition + Int64(framesThisBlock)) / Double(sampleRate)
+            let blockStart = Double(framePosition) / sampleRate
+            let blockEnd = Double(framePosition + Int64(framesThisBlock)) / sampleRate
 
             while nextIndex < sorted.count, sorted[nextIndex].start <= blockEnd {
                 active.append(sorted[nextIndex])
@@ -62,16 +75,27 @@ enum DefaultMIDIRenderer {
             }
             active.removeAll { $0.end < blockStart }
 
-            var interleaved = [Float](repeating: 0, count: framesThisBlock * 2)
+            buffer.frameLength = AVAudioFrameCount(framesThisBlock)
+            guard let channels = buffer.floatChannelData else {
+                throw DefaultMIDIRendererError.cannotCreateBuffer
+            }
+
+            let left = channels[0]
+            let right = channels[1]
+
+            for i in 0..<framesThisBlock {
+                left[i] = 0
+                right[i] = 0
+            }
 
             for note in active {
                 let firstSample = max(
                     0,
-                    Int(floor((note.start - blockStart) * Double(sampleRate)))
+                    Int(floor((note.start - blockStart) * sampleRate))
                 )
                 let lastSample = min(
                     framesThisBlock,
-                    Int(ceil((note.end - blockStart) * Double(sampleRate)))
+                    Int(ceil((note.end - blockStart) * sampleRate))
                 )
                 guard firstSample < lastSample else { continue }
 
@@ -79,7 +103,7 @@ enum DefaultMIDIRenderer {
                 let rightGain = sqrt((1.0 + note.pan) * 0.5)
 
                 for i in firstSample..<lastSample {
-                    let absoluteTime = blockStart + Double(i) / Double(sampleRate)
+                    let absoluteTime = blockStart + Double(i) / sampleRate
                     let t = absoluteTime - note.start
                     guard t >= 0 else { continue }
 
@@ -102,32 +126,20 @@ enum DefaultMIDIRenderer {
                     let gain = 0.105 * pow(note.velocity, 1.25) * envelope
                     let value = sample * gain
 
-                    let base = i * 2
-                    interleaved[base] += Float(value * leftGain)
-                    interleaved[base + 1] += Float(value * rightGain)
+                    left[i] += Float(value * leftGain)
+                    right[i] += Float(value * rightGain)
                 }
             }
 
             for i in 0..<framesThisBlock {
-                let base = i * 2
-                interleaved[base] = Float(tanh(Double(interleaved[base]) * 1.15) * 0.88)
-                interleaved[base + 1] = Float(tanh(Double(interleaved[base + 1]) * 1.15) * 0.88)
+                left[i] = Float(tanh(Double(left[i]) * 1.15) * 0.88)
+                right[i] = Float(tanh(Double(right[i]) * 1.15) * 0.88)
             }
 
-            encoded.append(session.encode(samples: interleaved))
+            try file.write(from: buffer)
             framePosition += Int64(framesThisBlock)
         }
 
-        encoded.append(session.flush())
-
-        var fileData = Data()
-        fileData.append(session.generateID3Tag())
-        fileData.append(session.generateXingHeader())
-        fileData.append(encoded)
-
-        let out = FileManager.default.temporaryDirectory
-            .appendingPathComponent("default-piano-\(UUID().uuidString).mp3")
-        try fileData.write(to: out, options: .atomic)
         return out
     }
 
