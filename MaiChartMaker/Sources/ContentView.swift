@@ -283,7 +283,28 @@ struct ContentView: View {
                 .buttonStyle(ArcadePrimaryButtonStyle(colors: [ArcadePalette.cyan, ArcadePalette.purple]))
                 .disabled(model.isWorking)
 
-                Text("MIDI/MusicXML render directly into 320 kbps MP3 frames for AstroDX—no intermediate WAV file is written. Load any legally obtained SF2/DLS bank to replace the built-in piano. Roland/Yamaha sample banks are not bundled; use your own licensed bank.")
+                if let comparison = model.waveformComparison {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("ENCODE QUALITY CHECK", systemImage: "waveform.path.ecg")
+                            .font(.system(size: 10, weight: .black, design: .rounded))
+                            .foregroundStyle(ArcadePalette.aqua)
+
+                        Text(comparison.summary)
+                            .font(.system(.subheadline, design: .rounded, weight: .bold))
+                            .foregroundStyle(ArcadePalette.ink)
+
+                        Text("Compared by decoding the final MP3 back to PCM and measuring it against the lossless WAV reference.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(12)
+                    .background(
+                        ArcadePalette.aqua.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    )
+                }
+
+                Text("MIDI/MusicXML are rendered first to a lossless 48 kHz WAV reference, then FFmpeg/libmp3lame makes the 320 kbps AstroDX MP3. The app compares the decoded MP3 waveform against the WAV so you can see the actual encode difference. Load any legally obtained SF2/DLS bank to replace the built-in piano.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
