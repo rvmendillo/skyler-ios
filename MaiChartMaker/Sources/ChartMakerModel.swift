@@ -294,18 +294,12 @@ final class ChartMakerModel: ObservableObject {
         status = "Encoding 320 kbps MP3 with native LAME…"
         let mp3 = try await AudioPipeline.transcodeToMP3(wav)
 
-        status = "Verifying decoded MP3 against the WAV master…"
-        let comparison = try await WaveformQualityChecker.verify(
-            referenceWAV: wav,
-            encodedMP3: mp3
-        )
-
         self.analysisAudioURL = wav
         self.originalAudioURL = nil
         self.audioURL = mp3
-        self.waveformComparison = comparison
+        self.waveformComparison = nil
         self.status =
-            "Exact score • \(instrumentName) • Apple Sampler + LAME • quality gate passed • \(comparison.summary)"
+            "Exact score • \(instrumentName) • Apple Sampler + LAME • MP3 ready."
         prepareExport()
     }
 
@@ -338,18 +332,12 @@ final class ChartMakerModel: ObservableObject {
         status = "Encoding 320 kbps MP3 with native LAME…"
         let mp3 = try await AudioPipeline.transcodeToMP3(wav)
 
-        status = "Verifying decoded MP3 against the WAV master…"
-        let comparison = try await WaveformQualityChecker.verify(
-            referenceWAV: wav,
-            encodedMP3: mp3
-        )
-
         self.analysisAudioURL = wav
-        self.originalAudioURL = wav
+        self.originalAudioURL = nil
         self.audioURL = mp3
-        self.waveformComparison = comparison
+        self.waveformComparison = nil
         self.status =
-            "Exact score • \(instrumentName) • Apple Sampler + LAME • quality gate passed • \(comparison.summary)"
+            "Exact score • \(instrumentName) • Apple Sampler + LAME • MP3 ready."
         prepareExport()
     }
 
