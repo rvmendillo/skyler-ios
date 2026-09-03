@@ -521,9 +521,11 @@ enum ChartGenerator {
             let gesture: Gesture
             if strength >= 0.90, step % 16 == 0, rng.chance(0.30) {
                 gesture = .centerHold(rng.chance(0.45) ? "4:2" : "4:1")
-            } else if strength >= 0.74, rng.chance(0.34) {
+            } else if strength >= 0.72, rng.chance(0.40) {
                 gesture = .double(wrapped(baseLane + (rng.chance(0.5) ? 4 : 3)))
-            } else if abs(interval) >= 7, rng.chance(0.46) {
+            } else if strength >= 0.86,
+                      abs(interval) >= 9,
+                      rng.chance(0.10) {
                 gesture = .slide(
                     destination: wrapped(
                         baseLane +
@@ -814,6 +816,48 @@ enum ChartGenerator {
             }
         }
 
+        // Keep Re:MASTER tap/double-centric. Slides are accent gestures,
+        // not the primary note texture: cap them to roughly 8% of events and
+        // preserve only the most musically important melody-led slides.
+        let slideIndices = events.indices.filter {
+            if case .slide = events[$0].gesture {
+                return true
+            }
+            return false
+        }
+
+        let maxSlides = max(2, Int(Double(events.count) * 0.08))
+        if slideIndices.count > maxSlides {
+            let convertToTap = slideIndices
+                .sorted {
+                    let lhs =
+                        events[$0].importance +
+                        events[$0].melodyStrength * 0.35
+                    let rhs =
+                        events[$1].importance +
+                        events[$1].melodyStrength * 0.35
+                    return lhs < rhs
+                }
+                .prefix(slideIndices.count - maxSlides)
+
+            for index in convertToTap {
+                let old = events[index]
+                events[index] = FamilyEvent(
+                    step: old.step,
+                    lane: old.lane,
+                    gesture: .tap,
+                    strength: old.strength,
+                    drumStrength: old.drumStrength,
+                    drumNote: old.drumNote,
+                    melodyPitch: old.melodyPitch,
+                    melodyStrength: old.melodyStrength,
+                    melodicInterval: old.melodicInterval,
+                    importance: old.importance,
+                    phrase: old.phrase
+                )
+            }
+        }
+
         // Cap sustained density while preserving strong melody/drum anchors.
         // Boss sections may still briefly spike above this, but the whole chart
         // stays in a human two-hand range rather than becoming an autoplay map.
@@ -926,7 +970,8 @@ enum ChartGenerator {
         case .master:
             switch gesture {
             case .slide(let destination, let duration):
-                return source.importance >= 0.55
+                return source.importance >= 0.78 &&
+                       source.melodyStrength >= 0.74
                     ? .slide(destination: destination, duration: duration)
                     : .tap
             case .double(let other):
@@ -1078,7 +1123,7 @@ enum ChartGenerator {
                     wrapped(lane + (rng.chance(0.5) ? 4 : 3))
                 )
             } else if isTom(drumNote),
-                      roll < 0.28 {
+                      roll < 0.08 {
                 let destination = wrapped(
                     lane +
                     (rng.chance(0.5) ? 1 : -1) *
@@ -1092,9 +1137,9 @@ enum ChartGenerator {
         }
 
         if result == .tap,
-           melodyStrength >= 0.62,
-           absInterval >= 5,
-           roll < 0.50 {
+           melodyStrength >= 0.84,
+           absInterval >= 8,
+           roll < 0.14 {
             let distance = min(5, max(2, absInterval / 2))
             let direction = melodicInterval >= 0 ? 1 : -1
             result = .slide(
