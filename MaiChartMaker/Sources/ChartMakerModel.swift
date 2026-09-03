@@ -78,13 +78,10 @@ final class ChartMakerModel: ObservableObject {
 
                 self.charts = ChartGenerator.generateAll(analysis: result.analysis)
 
-                if self.soundFontURL != nil {
-                    self.status = "Exact score loaded • rendering \(self.selectedInstrumentName)…"
-                    try await self.renderScoreWithCurrentSoundFont()
-                } else {
-                    self.status = "Exact score loaded • rendering built-in piano…"
-                    try await self.renderScoreWithDefaultPiano()
-                }
+                let soundName = self.soundFontURL == nil
+                    ? "built-in piano"
+                    : self.selectedInstrumentName
+                self.status = "Exact score loaded • \(self.pianoGameNotes.count) Piano Tiles notes • testing \(soundName). Render MP3 when ready."
             }
         }
     }
@@ -99,9 +96,9 @@ final class ChartMakerModel: ObservableObject {
                 self.pianoPreviewEngine.invalidateSoundFont()
 
                 if self.scoreMIDIURL != nil {
-                    try await self.renderScoreWithCurrentSoundFont()
+                    self.status = "Soundfont loaded • Piano Tiles now tests \(self.selectedInstrumentName). Tap Render when ready."
                 } else {
-                    self.status = "Soundfont loaded. Import MIDI or MusicXML to render it."
+                    self.status = "Soundfont loaded. Import MIDI or MusicXML to test it."
                 }
             }
         }
