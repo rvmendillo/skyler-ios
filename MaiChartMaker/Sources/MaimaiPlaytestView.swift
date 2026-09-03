@@ -525,6 +525,9 @@ struct MaimaiPlaytestView: View {
         .onChange(of: noteText) { _ in
             restart()
         }
+        .onChange(of: firstBeat) { _ in
+            restart()
+        }
         .onDisappear {
             pause()
         }
