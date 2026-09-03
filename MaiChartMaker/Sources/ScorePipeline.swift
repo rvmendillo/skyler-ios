@@ -118,6 +118,8 @@ enum ScorePipeline {
         }
 
         var notesByBeat: [Int64: (beat: Double, velocity: Double, count: Int)] = [:]
+        var drumsByBeat: [Int64: (beat: Double, strength: Double, note: UInt8)] = [:]
+        var melodyByBeat: [Int64: (beat: Double, pitch: UInt8, strength: Double)] = [:]
         var maxBeat = 0.0
 
         var trackCount: UInt32 = 0
@@ -150,12 +152,34 @@ enum ScorePipeline {
 
                     let key = Int64((beat * 1_000_000).rounded())
                     let velocity = Double(note.velocity) / 127.0
+
                     if var existing = notesByBeat[key] {
                         existing.velocity = max(existing.velocity, velocity)
                         existing.count += 1
                         notesByBeat[key] = existing
                     } else {
                         notesByBeat[key] = (beat, velocity, 1)
+                    }
+
+                    if note.channel == 9 {
+                        let weighted = min(1, velocity * drumAccentWeight(note.note))
+                        if let existing = drumsByBeat[key] {
+                            if weighted > existing.strength {
+                                drumsByBeat[key] = (beat, weighted, note.note)
+                            }
+                        } else {
+                            drumsByBeat[key] = (beat, weighted, note.note)
+                        }
+                    } else {
+                        if let existing = melodyByBeat[key] {
+                            let preferPitch = note.note > existing.pitch
+                            let samePitchStronger = note.note == existing.pitch && velocity > existing.strength
+                            if preferPitch || samePitchStronger {
+                                melodyByBeat[key] = (beat, note.note, velocity)
+                            }
+                        } else {
+                            melodyByBeat[key] = (beat, note.note, velocity)
+                        }
                     }
                 }
 
@@ -198,6 +222,9 @@ enum ScorePipeline {
         tempoPoints = normalizedTempoMap(tempoPoints)
 
         let sorted = notesByBeat.values.sorted { $0.beat < $1.beat }
+        let drums = drumsByBeat.values.sorted { $0.beat < $1.beat }
+        let melody = melodyByBeat.values.sorted { $0.beat < $1.beat }
+
         var onsetSeconds: [Double] = []
         for item in sorted {
             var seconds: Float64 = 0
@@ -217,18 +244,26 @@ enum ScorePipeline {
             beatPositions: sorted.map(\.beat),
             durationBeats: maxBeat,
             tempoMap: tempoPoints,
-            exactScoreTiming: true
+            exactScoreTiming: true,
+            drumBeatPositions: drums.map(\.beat),
+            drumStrengths: drums.map(\.strength),
+            drumNoteNumbers: drums.map(\.note),
+            melodyBeatPositions: melody.map(\.beat),
+            melodyPitches: melody.map(\.pitch),
+            melodyStrengths: melody.map(\.strength)
         )
     }
 
     private static func analysisFromScore(_ score: ParsedScore) -> AudioAnalysis {
         var byBeat: [Int64: (beat: Double, strength: Double, count: Int)] = [:]
+        var melodyByBeat: [Int64: (beat: Double, pitch: UInt8, strength: Double)] = [:]
         var maxBeat = 0.0
 
         for note in score.notes {
             maxBeat = max(maxBeat, note.beat + note.duration)
             let key = Int64((note.beat * 1_000_000).rounded())
             let base = Double(note.velocity) / 127.0
+
             if var existing = byBeat[key] {
                 existing.strength = max(existing.strength, base)
                 existing.count += 1
@@ -236,10 +271,21 @@ enum ScorePipeline {
             } else {
                 byBeat[key] = (note.beat, base, 1)
             }
+
+            if let existing = melodyByBeat[key] {
+                let preferPitch = note.midiNote > existing.pitch
+                let samePitchStronger = note.midiNote == existing.pitch && base > existing.strength
+                if preferPitch || samePitchStronger {
+                    melodyByBeat[key] = (note.beat, note.midiNote, base)
+                }
+            } else {
+                melodyByBeat[key] = (note.beat, note.midiNote, base)
+            }
         }
 
         let tempo = normalizedTempoMap(score.tempos.isEmpty ? [TempoPoint(beat: 0, bpm: 120)] : score.tempos)
         let sorted = byBeat.values.sorted { $0.beat < $1.beat }
+        let melody = melodyByBeat.values.sorted { $0.beat < $1.beat }
         let seconds = sorted.map { secondsForBeat($0.beat, tempo: tempo) }
         let duration = secondsForBeat(maxBeat, tempo: tempo)
 
@@ -252,8 +298,22 @@ enum ScorePipeline {
             beatPositions: sorted.map(\.beat),
             durationBeats: maxBeat,
             tempoMap: tempo,
-            exactScoreTiming: true
+            exactScoreTiming: true,
+            melodyBeatPositions: melody.map(\.beat),
+            melodyPitches: melody.map(\.pitch),
+            melodyStrengths: melody.map(\.strength)
         )
+    }
+
+    private static func drumAccentWeight(_ note: UInt8) -> Double {
+        switch note {
+        case 35, 36: return 1.18       // kick
+        case 38, 40: return 1.14       // snare
+        case 42, 44, 46: return 0.82   // hats
+        case 49, 51, 52, 55, 57, 59: return 1.06 // crash/ride
+        case 41, 43, 45, 47, 48, 50: return 0.94 // toms
+        default: return 0.88
+        }
     }
 
     static func normalizedTempoMap(_ input: [TempoPoint]) -> [TempoPoint] {
