@@ -7,7 +7,8 @@ enum ChartExporter {
         artist: String,
         audioURL: URL,
         analysis: AudioAnalysis,
-        charts: [GeneratedChart]
+        charts: [GeneratedChart],
+        originalAudioURL: URL? = nil
     ) throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("MaiChartExport-\(UUID().uuidString)", isDirectory: true)
@@ -15,9 +16,38 @@ enum ChartExporter {
         let song = root.appendingPathComponent(folderName, isDirectory: true)
 
         try FileManager.default.createDirectory(at: song, withIntermediateDirectories: true)
-        let maidata = ChartGenerator.maidata(title: title, artist: artist, analysis: analysis, charts: charts)
-        try maidata.write(to: song.appendingPathComponent("maidata.txt"), atomically: true, encoding: .utf8)
-        try FileManager.default.copyItem(at: audioURL, to: song.appendingPathComponent("track.mp3"))
+
+        // AstroDX-compatible playback copy.
+        let trackName = "track.mp3"
+        let maidata = ChartGenerator.maidata(
+            title: title,
+            artist: artist,
+            analysis: analysis,
+            charts: charts,
+            trackFilename: trackName
+        )
+        try maidata.write(
+            to: song.appendingPathComponent("maidata.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try FileManager.default.copyItem(
+            at: audioURL,
+            to: song.appendingPathComponent(trackName)
+        )
+
+        // Keep the exact imported source beside the playable track so the
+        // original AAC/M4A/WAV is never discarded by the app.
+        if let originalAudioURL,
+           originalAudioURL.standardizedFileURL != audioURL.standardizedFileURL {
+            let ext = originalAudioURL.pathExtension.isEmpty ? "audio" : originalAudioURL.pathExtension.lowercased()
+            let originalName = "source-original.\(ext)"
+            try? FileManager.default.copyItem(
+                at: originalAudioURL,
+                to: song.appendingPathComponent(originalName)
+            )
+        }
+
         return song
     }
 
