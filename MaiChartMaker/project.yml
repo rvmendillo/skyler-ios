@@ -22,8 +22,6 @@ targets:
     dependencies:
       - package: SwiftMP3
       - package: ZIPFoundation
-      - package: FFmpegKit
-        product: ffmpegkit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rvmendillo.maichartmaker
@@ -33,6 +31,7 @@ targets:
         SUPPORTS_MACCATALYST: NO
         CODE_SIGN_STYLE: Automatic
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
     info:
       path: Sources/Info.plist
       properties:
