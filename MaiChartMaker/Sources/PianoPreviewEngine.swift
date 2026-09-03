@@ -11,6 +11,7 @@ final class PianoPreviewEngine {
     private var loadedBankURL: URL?
     private var loadedProgram: Int?
     private var builtInBuffers: [Int: AVAudioPCMBuffer] = [:]
+    private var activeSamplerNotes: [UInt8: Int] = [:]
 
     init() {
         engine.attach(sampler)
@@ -32,13 +33,16 @@ final class PianoPreviewEngine {
     ) throws {
         try prepareAudioSession()
 
+        let playableNote = normalizedPlayableNote(midiNote)
+
         if let bankURL = soundFontURL ?? BundledSoundBank.url {
             try ensureSoundFont(bankURL, program: program)
-            sampler.startNote(midiNote, withVelocity: velocity, onChannel: 0)
+            activeSamplerNotes[playableNote, default: 0] += 1
+            sampler.startNote(playableNote, withVelocity: velocity, onChannel: 0)
         } else {
-            let key = (program << 8) | Int(midiNote)
+            let key = (program << 8) | Int(playableNote)
             let buffer = builtInBuffers[key] ?? makeBuiltInBuffer(
-                note: midiNote,
+                note: playableNote,
                 velocity: velocity,
                 program: program
             )
@@ -55,7 +59,15 @@ final class PianoPreviewEngine {
     }
 
     func stop(midiNote: UInt8, soundFontURL: URL?) {
-        sampler.stopNote(midiNote, onChannel: 0)
+        let playableNote = normalizedPlayableNote(midiNote)
+        let remaining = max(0, (activeSamplerNotes[playableNote] ?? 1) - 1)
+
+        if remaining == 0 {
+            activeSamplerNotes.removeValue(forKey: playableNote)
+            sampler.stopNote(playableNote, onChannel: 0)
+        } else {
+            activeSamplerNotes[playableNote] = remaining
+        }
     }
 
     func stopAll() {
@@ -63,6 +75,7 @@ final class PianoPreviewEngine {
             sampler.stopNote(note, onChannel: 0)
         }
         players.forEach { $0.stop() }
+        activeSamplerNotes.removeAll()
     }
 
     func invalidateSoundFont() {
@@ -100,6 +113,18 @@ final class PianoPreviewEngine {
 
         loadedBankURL = url
         loadedProgram = program
+    }
+
+    private func normalizedPlayableNote(_ note: UInt8) -> UInt8 {
+        var value = Int(note)
+
+        // A few SF2 presets have sparse extreme ranges. Fold preview-only
+        // notes by octaves into a reliable audible range rather than dropping
+        // them. The chart keeps the original MIDI pitch and timing.
+        while value < 36 { value += 12 }
+        while value > 96 { value -= 12 }
+
+        return UInt8(clamping: value)
     }
 
     private func makeBuiltInBuffer(
