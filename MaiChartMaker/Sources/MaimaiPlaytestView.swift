@@ -528,7 +528,7 @@ struct MaimaiPlaytestView: View {
                 Circle()
                     .fill(ArcadePalette.aqua)
                 Text("H")
-                    .font(.caption.black())
+                    .font(.system(size: 11, weight: .black, design: .rounded))
                     .foregroundStyle(.white)
             }
             .frame(width: 31, height: 31)
