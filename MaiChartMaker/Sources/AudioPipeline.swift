@@ -1,6 +1,5 @@
 import Foundation
 import AVFoundation
-import SwiftMP3
 
 enum AudioPipelineError: LocalizedError {
     case noAudioTrack
@@ -67,58 +66,10 @@ enum AudioPipeline {
     }
 
     static func transcodeToMP3(_ source: URL) async throws -> URL {
-        let asset = AVURLAsset(url: source)
-        let tracks = try await asset.loadTracks(withMediaType: .audio)
-        guard let track = tracks.first else { throw AudioPipelineError.noAudioTrack }
-
-        let reader = try AVAssetReader(asset: asset)
-        let sourceRate = (try? AVAudioFile(forReading: source).processingFormat.sampleRate) ?? 44_100
-        let supportedRates = [32_000.0, 44_100.0, 48_000.0]
-        let outputRate = supportedRates.min(by: { abs($0 - sourceRate) < abs($1 - sourceRate) }) ?? 44_100
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: outputRate,
-            AVNumberOfChannelsKey: 2,
-            AVLinearPCMBitDepthKey: 32,
-            AVLinearPCMIsFloatKey: true,
-            AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: false
-        ]
-        let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
-        output.alwaysCopiesSampleData = false
-        guard reader.canAdd(output) else { throw AudioPipelineError.cannotReadPCM }
-        reader.add(output)
-        guard reader.startReading() else { throw reader.error ?? AudioPipelineError.cannotReadPCM }
-
-        let encoder = MP3Encoder(options: MP3EncoderOptions(
-            sampleRate: Int(outputRate),
-            bitrateKbps: 320,
-            vbr: false,
-            mode: .stereo,
-            quality: 0
-        ))
-        var session = encoder.newSession()
-        var encoded = Data()
-
-        while let sample = output.copyNextSampleBuffer() {
-            if let data = floatData(from: sample) {
-                encoded.append(session.encode(samples: data))
-            }
-        }
-        if reader.status == .failed {
-            throw reader.error ?? AudioPipelineError.cannotReadPCM
-        }
-        encoded.append(session.flush())
-
-        var fileData = Data()
-        fileData.append(session.generateID3Tag())
-        fileData.append(session.generateXingHeader())
-        fileData.append(encoded)
-
-        let out = FileManager.default.temporaryDirectory
-            .appendingPathComponent("track-\(UUID().uuidString).mp3")
-        try fileData.write(to: out, options: .atomic)
-        return out
+        try await LAMEAudioEncoder.encodeToMP3(
+            source: source,
+            bitrateKbps: 320
+        )
     }
 
     static func analyze(_ source: URL) async throws -> AudioAnalysis {
