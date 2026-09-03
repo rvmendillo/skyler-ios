@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 struct MIDIPianoTilesGameView: View {
     let notes: [PianoGameNote]
