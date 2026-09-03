@@ -283,7 +283,7 @@ struct ContentView: View {
                 .buttonStyle(ArcadePrimaryButtonStyle(colors: [ArcadePalette.cyan, ArcadePalette.purple]))
                 .disabled(model.isWorking)
 
-                Text("MIDI/MusicXML automatically render with the built-in piano, then export as a 320 kbps MP3 for AstroDX. Load any legally obtained SF2/DLS bank to replace the default sound. Roland/Yamaha sample banks are not bundled; use your own licensed bank.")
+                Text("MIDI/MusicXML render directly into 320 kbps MP3 frames for AstroDX—no intermediate WAV file is written. Load any legally obtained SF2/DLS bank to replace the built-in piano. Roland/Yamaha sample banks are not bundled; use your own licensed bank.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
