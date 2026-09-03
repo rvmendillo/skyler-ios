@@ -23,7 +23,7 @@ struct MIDIPianoTilesGameView: View {
         in: .common
     ).autoconnect()
 
-    private let leadTime = 2.65
+    private let leadTime = 1.20
     private let hitWindow = 0.22
 
     var body: some View {
@@ -81,13 +81,11 @@ struct MIDIPianoTilesGameView: View {
 
                     ForEach(visibleNotes(hitY: hitY, pixelsPerSecond: pixelsPerSecond)) { note in
                         let y = hitY - CGFloat(note.time - elapsed) * pixelsPerSecond
-                        let height = max(
-                            30,
-                            min(
-                                76,
-                                CGFloat(max(0.08, note.duration)) * pixelsPerSecond * 0.58
-                            )
-                        )
+                        // Fixed visual height keeps simultaneous notes
+                        // perfectly matched and prevents dense chords from
+                        // looking uneven. MIDI duration still controls how
+                        // long the auditioned sound is held.
+                        let height: CGFloat = 46
 
                         FallingMIDITile(note: note)
                             .frame(width: laneWidth - 8, height: height)
@@ -170,7 +168,7 @@ struct MIDIPianoTilesGameView: View {
             Text(
                 notes.isEmpty
                 ? "Import MIDI or MusicXML to load falling notes."
-                : "Tiles use the MIDI's exact note timing. Tap one of the four black keys when a falling tile reaches the pink line."
+                : "Fast 4-lane mode • maximum 2 notes at once • simultaneous notes use identical tile length. Tap when a tile reaches the pink line."
             )
             .font(.caption2)
             .foregroundStyle(.secondary)
