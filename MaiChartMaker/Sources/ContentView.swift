@@ -349,7 +349,7 @@ struct ContentView: View {
 
                 Text(model.scoreMIDIURL == nil
                      ? "MP3/M4A are transcribed on-device with Basic Pitch CoreML. Piano Tiles uses the selected Apple Sampler instrument, while chart generation combines percussive rhythm anchors with melody motion."
-                     : "MIDI/MusicXML render through Apple AVAudioUnitSampler with the bundled GeneralUser GS bank, then LAME creates a 320 kbps MP3. The MP3 is accepted only after the decoded waveform passes the WAV quality gate.")
+                     : "MIDI/MusicXML render through Apple AVAudioUnitSampler with the bundled GeneralUser GS bank, then LAME creates a 320 kbps MP3. The WAV remains an internal render reference and is not included in AstroDX export.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
