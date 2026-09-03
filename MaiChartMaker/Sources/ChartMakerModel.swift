@@ -227,19 +227,29 @@ final class ChartMakerModel: ObservableObject {
         let program = selectedProgram
         let instrumentName = selectedInstrumentName
 
-        status = "Rendering \(instrumentName) to lossless WAV…"
-        let wav = try await Task.detached(priority: .userInitiated) {
-            try DefaultMIDIRenderer.renderBuiltInWAV(
+        status = "Rendering \(instrumentName) with Apple Sampler + \(BundledSoundBank.displayName)…"
+
+        let wav: URL
+        if let bankURL = BundledSoundBank.url {
+            wav = try await SoundFontRenderer.renderWAV(
                 midiURL: midiURL,
+                bankURL: bankURL,
                 program: program
             )
-        }.value
+        } else {
+            wav = try await Task.detached(priority: .userInitiated) {
+                try DefaultMIDIRenderer.renderBuiltInWAV(
+                    midiURL: midiURL,
+                    program: program
+                )
+            }.value
+        }
 
-        status = "Encoding native 320 kbps MP3…"
+        status = "Encoding 320 kbps MP3 with native LAME…"
         let mp3 = try await AudioPipeline.transcodeToMP3(wav)
 
-        status = "Comparing WAV and decoded MP3 waveforms…"
-        let comparison = try? await WaveformQualityChecker.compare(
+        status = "Verifying decoded MP3 against the WAV master…"
+        let comparison = try await WaveformQualityChecker.verify(
             referenceWAV: wav,
             encodedMP3: mp3
         )
@@ -248,9 +258,8 @@ final class ChartMakerModel: ObservableObject {
         self.originalAudioURL = wav
         self.audioURL = mp3
         self.waveformComparison = comparison
-        self.status = comparison.map {
-            "Exact score • \(instrumentName) • native MP3 ready • \($0.summary)"
-        } ?? "Exact score • \(instrumentName) • native 320 kbps MP3 ready."
+        self.status =
+            "Exact score • \(instrumentName) • Apple Sampler + LAME • quality gate passed • \(comparison.summary)"
         prepareExport()
     }
 
@@ -273,18 +282,18 @@ final class ChartMakerModel: ObservableObject {
         let program = selectedProgram
         let instrumentName = selectedInstrumentName
 
-        status = "Rendering \(instrumentName) to lossless WAV…"
+        status = "Rendering \(instrumentName) with Apple Sampler…"
         let wav = try await SoundFontRenderer.renderWAV(
             midiURL: midiURL,
             bankURL: soundFontURL,
             program: program
         )
 
-        status = "Encoding native 320 kbps MP3…"
+        status = "Encoding 320 kbps MP3 with native LAME…"
         let mp3 = try await AudioPipeline.transcodeToMP3(wav)
 
-        status = "Comparing WAV and decoded MP3 waveforms…"
-        let comparison = try? await WaveformQualityChecker.compare(
+        status = "Verifying decoded MP3 against the WAV master…"
+        let comparison = try await WaveformQualityChecker.verify(
             referenceWAV: wav,
             encodedMP3: mp3
         )
@@ -293,19 +302,28 @@ final class ChartMakerModel: ObservableObject {
         self.originalAudioURL = wav
         self.audioURL = mp3
         self.waveformComparison = comparison
-        self.status = comparison.map {
-            "Exact score • \(instrumentName) • native MP3 ready • \($0.summary)"
-        } ?? "Exact score • \(instrumentName) • native 320 kbps MP3 ready."
+        self.status =
+            "Exact score • \(instrumentName) • Apple Sampler + LAME • quality gate passed • \(comparison.summary)"
         prepareExport()
     }
 
     private func analyzeAndGenerate() async throws {
         guard let source = analysisAudioURL ?? audioURL else { return }
-        status = "Detecting tempo, beats and onsets from original audio…"
-        let analysis = try await AudioPipeline.analyze(source)
-        self.analysis = analysis
-        self.charts = ChartGenerator.generateAll(analysis: analysis)
-        status = "Detected \(String(format: "%.1f", analysis.bpm)) BPM • generated \(charts.count) charts."
+
+        status = "Transcribing melody + detecting percussive beat anchors on-device…"
+        let analyzed = try await AudioPipeline.analyzeWithTranscription(source)
+
+        self.analysis = analyzed.analysis
+        self.pianoGameNotes = analyzed.pianoGameNotes
+        self.charts = ChartGenerator.generateAll(
+            analysis: analyzed.analysis
+        )
+
+        let melodyCount = analyzed.analysis.melodyBeatPositions.count
+        let drumCount = analyzed.analysis.drumBeatPositions.count
+
+        status =
+            "Audio chart family ready • \(String(format: "%.1f", analyzed.analysis.bpm)) BPM • \(drumCount) rhythm anchors • \(melodyCount) melody notes • \(charts.count) linked difficulties."
         prepareExport()
     }
 
