@@ -32,8 +32,8 @@ final class PianoPreviewEngine {
     ) throws {
         try prepareAudioSession()
 
-        if let soundFontURL {
-            try ensureSoundFont(soundFontURL, program: program)
+        if let bankURL = soundFontURL ?? BundledSoundBank.url {
+            try ensureSoundFont(bankURL, program: program)
             sampler.startNote(midiNote, withVelocity: velocity, onChannel: 0)
         } else {
             let key = (program << 8) | Int(midiNote)
@@ -55,9 +55,7 @@ final class PianoPreviewEngine {
     }
 
     func stop(midiNote: UInt8, soundFontURL: URL?) {
-        if soundFontURL != nil {
-            sampler.stopNote(midiNote, onChannel: 0)
-        }
+        sampler.stopNote(midiNote, onChannel: 0)
     }
 
     func stopAll() {
