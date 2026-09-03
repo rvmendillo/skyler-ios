@@ -28,6 +28,32 @@ jobs:
           .icon-venv/bin/python -m pip install --quiet pillow
           .icon-venv/bin/python Scripts/generate_app_icon.py
 
+      - name: Fetch native audio assets
+        working-directory: MaiChartMaker
+        run: |
+          set -euo pipefail
+          rm -rf Resources
+          mkdir -p Resources
+
+          curl -L --fail --retry 3 \
+            "https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/684543d5e5efaef08d02be50dcda8d552478fa60/GeneralUser-GS.sf2" \
+            -o Resources/GeneralUser-GS.sf2
+          curl -L --fail --retry 3 \
+            "https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/684543d5e5efaef08d02be50dcda8d552478fa60/documentation/LICENSE.txt" \
+            -o Resources/GeneralUser-GS-LICENSE.txt
+
+          curl -L --fail --retry 3 \
+            "https://github.com/john-rocky/CoreML-Models/releases/download/basic-pitch-v1/BasicPitch_nmp.mlpackage.zip" \
+            -o /tmp/basic-pitch.zip
+          unzip -q /tmp/basic-pitch.zip -d Resources
+          curl -L --fail --retry 3 \
+            "https://raw.githubusercontent.com/spotify/basic-pitch/main/LICENSE" \
+            -o Resources/BasicPitch-LICENSE.txt
+
+          test -f Resources/GeneralUser-GS.sf2
+          test -d Resources/BasicPitch_nmp.mlpackage
+          du -sh Resources/*
+
       - name: Generate Xcode project
         working-directory: MaiChartMaker
         run: xcodegen generate
