@@ -598,7 +598,10 @@ enum ChartGenerator {
                     melodyPitch: old?.melodyPitch,
                     melodyStrength: max(old?.melodyStrength ?? 0, 0.64),
                     melodicInterval: old?.melodicInterval ?? direction * 2,
-                    importance: min(old?.importance ?? 0.23, 0.26),
+                    importance: max(
+                        old?.importance ?? 0,
+                        offset.isMultiple(of: 2) ? 0.32 : 0.24
+                    ),
                     phrase: phrase
                 )
             }
