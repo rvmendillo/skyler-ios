@@ -21,6 +21,12 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Generate app icon assets
+        working-directory: MaiChartMaker
+        run: |
+          python3 -m pip install --quiet pillow
+          python3 Scripts/generate_app_icon.py
+
       - name: Generate Xcode project
         working-directory: MaiChartMaker
         run: xcodegen generate
