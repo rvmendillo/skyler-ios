@@ -1,18 +1,11 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject private var model: ChartMakerModel
-    @State private var showFileImporter = false
+    @State private var showAudioPicker = false
     @State private var showDirectoryPicker = false
     @State private var showShare = false
     @State private var selectedDifficulty: ChartDifficulty = .master
-
-    private var audioTypes: [UTType] {
-        var values: [UTType] = [.audio, .mpeg4Audio]
-        if let mp3 = UTType(filenameExtension: "mp3") { values.append(mp3) }
-        return values
-    }
 
     var body: some View {
         NavigationStack {
@@ -27,22 +20,28 @@ struct ContentView: View {
 
                     if model.source == .file {
                         Button {
-                            showFileImporter = true
+                            showAudioPicker = true
                         } label: {
-                            Label("Choose MP3 / M4A / WAV", systemImage: "waveform.badge.plus")
+                            Label("Choose Audio File", systemImage: "waveform.badge.plus")
                         }
+
+                        Text("The picker intentionally shows all files so MP3/M4A/WAV files from iCloud, Downloads, and third-party Files providers stay tappable. Non-audio files will be rejected after selection.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     } else {
                         TextField("https://youtube.com/watch?v=…", text: $model.youtubeURL)
                             .textInputAutocapitalization(.never)
                             .keyboardType(.URL)
                             .autocorrectionDisabled()
+
                         Button {
                             model.importYouTube()
                         } label: {
                             Label("Import YouTube Audio", systemImage: "link")
                         }
-                        .disabled(model.youtubeURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        Text("Use only audio you have permission to download. YouTube resolution uses public Piped-compatible instances and may need an MP3 fallback if YouTube changes access.")
+                        .disabled(model.youtubeURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isWorking)
+
+                        Text("YouTube import now tries multiple current Invidious playback endpoints first, then Piped-compatible fallbacks. Only import audio you have permission to use.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -51,6 +50,7 @@ struct ContentView: View {
                 Section("Song") {
                     TextField("Title", text: $model.title)
                     TextField("Artist", text: $model.artist)
+
                     if let analysis = model.analysis {
                         LabeledContent("Tempo", value: String(format: "%.1f BPM", analysis.bpm))
                         LabeledContent("Offset", value: String(format: "%.3f s", analysis.firstBeat))
@@ -108,30 +108,31 @@ struct ContentView: View {
                             }
                         }
 
-                        Text("Direct copy: choose the AstroDX/levels folder in Files. The app creates a song folder containing maidata.txt and track.mp3.")
+                        Text("Choose AstroDX/levels in Files. The app creates a song folder containing maidata.txt and track.mp3.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
 
                 Section("Status") {
-                    HStack {
+                    HStack(alignment: .top) {
                         if model.isWorking { ProgressView() }
                         Text(model.status)
+                            .textSelection(.enabled)
                     }
                 }
             }
             .navigationTitle("MaiChart Maker")
-            .fileImporter(
-                isPresented: $showFileImporter,
-                allowedContentTypes: audioTypes,
-                allowsMultipleSelection: false
-            ) { result in
-                if case .success(let urls) = result, let url = urls.first {
-                    model.importFile(url)
-                } else if case .failure(let error) = result {
-                    model.errorMessage = error.localizedDescription
-                }
+            .sheet(isPresented: $showAudioPicker) {
+                AudioDocumentPicker(
+                    onPick: { url in
+                        showAudioPicker = false
+                        model.importFile(url)
+                    },
+                    onCancel: {
+                        showAudioPicker = false
+                    }
+                )
             }
             .sheet(isPresented: $showDirectoryPicker) {
                 DirectoryPicker { url in
