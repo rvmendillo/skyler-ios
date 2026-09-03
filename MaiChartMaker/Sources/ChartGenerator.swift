@@ -5,11 +5,38 @@ enum ChartGenerator {
         let generationSeed = UInt64.random(in: UInt64.min...UInt64.max)
         let blueprint = buildBlueprint(analysis: analysis, seed: generationSeed)
 
+        // Strict family inheritance:
+        // Re:MASTER -> MASTER -> EXPERT -> ADVANCED -> BASIC -> EASY.
+        // Every lower chart can only remove/simplify events from its parent.
+        let descending: [ChartDifficulty] = [
+            .remaster,
+            .master,
+            .expert,
+            .advanced,
+            .basic,
+            .easy
+        ]
+
+        var family: [ChartDifficulty: [FamilyEvent]] = [:]
+        var parentEvents = blueprint.events
+
+        for difficulty in descending {
+            let events: [FamilyEvent]
+            if difficulty == .remaster {
+                events = parentEvents
+            } else {
+                events = simplify(
+                    parentEvents,
+                    for: difficulty
+                )
+            }
+
+            family[difficulty] = events
+            parentEvents = events
+        }
+
         return ChartDifficulty.allCases.map { difficulty in
-            let familyEvents = simplify(
-                blueprint,
-                for: difficulty
-            )
+            let familyEvents = family[difficulty] ?? []
 
             return GeneratedChart(
                 difficulty: difficulty,
@@ -433,7 +460,7 @@ enum ChartGenerator {
     }
 
     private static func simplify(
-        _ blueprint: Blueprint,
+        _ parentEvents: [FamilyEvent],
         for difficulty: ChartDifficulty
     ) -> [FamilyEvent] {
         let threshold: Double
@@ -449,7 +476,7 @@ enum ChartGenerator {
         var output: [FamilyEvent] = []
         var lastStep = -999
 
-        for source in blueprint.events {
+        for source in parentEvents {
             guard source.importance >= threshold else { continue }
             guard source.step - lastStep >= difficulty.minimumGapSteps else {
                 continue
