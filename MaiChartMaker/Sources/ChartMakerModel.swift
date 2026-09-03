@@ -189,14 +189,11 @@ final class ChartMakerModel: ObservableObject {
             )
         }
 
-        status = "Rendering built-in piano from exact MIDI timing…"
-        let wav = try DefaultMIDIRenderer.renderPiano(midiURL: midiURL)
+        status = "Rendering MIDI directly to 320 kbps MP3…"
+        let mp3 = try DefaultMIDIRenderer.renderPianoMP3(midiURL: midiURL)
 
-        status = "Creating 320 kbps AstroDX MP3…"
-        let mp3 = try await AudioPipeline.transcodeToMP3(wav)
-
-        self.analysisAudioURL = wav
-        self.originalAudioURL = wav
+        self.analysisAudioURL = nil
+        self.originalAudioURL = nil
         self.audioURL = mp3
         self.status = "Exact score timing • built-in piano • AstroDX MP3 ready."
         prepareExport()
@@ -218,18 +215,15 @@ final class ChartMakerModel: ObservableObject {
             )
         }
 
-        status = "Rendering \(selectedInstrumentName) from the score…"
-        let wav = try await SoundFontRenderer.render(
+        status = "Rendering \(selectedInstrumentName) directly to 320 kbps MP3…"
+        let mp3 = try await SoundFontRenderer.renderMP3(
             midiURL: midiURL,
             bankURL: soundFontURL,
             program: selectedProgram
         )
 
-        status = "Creating AstroDX compatibility audio…"
-        let mp3 = try await AudioPipeline.transcodeToMP3(wav)
-
-        self.analysisAudioURL = wav
-        self.originalAudioURL = wav
+        self.analysisAudioURL = nil
+        self.originalAudioURL = nil
         self.audioURL = mp3
         self.status = "Exact score timing • rendered \(selectedInstrumentName) • AstroDX audio ready."
         prepareExport()
