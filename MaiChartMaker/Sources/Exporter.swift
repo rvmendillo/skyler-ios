@@ -36,16 +36,20 @@ enum ChartExporter {
             to: song.appendingPathComponent(trackName)
         )
 
-        // Keep the exact imported source beside the playable track so the
-        // original AAC/M4A/WAV is never discarded by the app.
+        // WAV is a render/reference master only and is intentionally never
+        // placed in the AstroDX export. For imported compressed originals we
+        // may retain the source beside track.mp3.
         if let originalAudioURL,
            originalAudioURL.standardizedFileURL != audioURL.standardizedFileURL {
-            let ext = originalAudioURL.pathExtension.isEmpty ? "audio" : originalAudioURL.pathExtension.lowercased()
-            let originalName = "source-original.\(ext)"
-            try? FileManager.default.copyItem(
-                at: originalAudioURL,
-                to: song.appendingPathComponent(originalName)
-            )
+            let ext = originalAudioURL.pathExtension.lowercased()
+
+            if !ext.isEmpty, ext != "wav" {
+                let originalName = "source-original.\(ext)"
+                try? FileManager.default.copyItem(
+                    at: originalAudioURL,
+                    to: song.appendingPathComponent(originalName)
+                )
+            }
         }
 
         return song
