@@ -602,15 +602,15 @@ private extension Data {
 
     mutating func appendVLQ(_ value: Int) {
         var buffer = [UInt8](repeating: 0, count: 5)
-        var v = max(0, value)
+        var v = Swift.max(0, value)
         var index = 4
         buffer[index] = UInt8(v & 0x7F)
-        while {
+        repeat {
             v >>= 7
             if v == 0 { break }
             index -= 1
             buffer[index] = UInt8((v & 0x7F) | 0x80)
-        }
+        } while v > 0
         append(contentsOf: buffer[index...4])
     }
 }
