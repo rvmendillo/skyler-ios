@@ -51,6 +51,27 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build | tee xcodebuild.log
 
+      - name: Embed FFmpeg frameworks for runtime loading
+        working-directory: MaiChartMaker
+        run: |
+          set -euo pipefail
+          APP="build/Build/Products/Release-iphoneos/MaiChartMaker.app"
+          SRC="build/SourcePackages/checkouts/ffmpeg-kit/Frameworks"
+          mkdir -p "$APP/Frameworks"
+
+          for name in ffmpegkit libavcodec libavdevice libavfilter libavformat libavutil libswresample libswscale; do
+            FRAMEWORK="$SRC/$name.xcframework/ios-arm64/$name.framework"
+            if [ ! -d "$FRAMEWORK" ]; then
+              echo "Missing FFmpeg framework: $FRAMEWORK"
+              exit 1
+            fi
+            cp -R "$FRAMEWORK" "$APP/Frameworks/"
+            codesign --remove-signature "$APP/Frameworks/$name.framework/$name" 2>/dev/null || true
+          done
+
+          echo "Embedded runtime-only FFmpeg frameworks:"
+          find "$APP/Frameworks" -maxdepth 1 -name "*.framework" -print
+
       - name: Package IPA
         working-directory: MaiChartMaker
         run: |
