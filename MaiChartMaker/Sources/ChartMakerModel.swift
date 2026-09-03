@@ -23,6 +23,7 @@ final class ChartMakerModel: ObservableObject {
     @Published var soundFontURL: URL?
     @Published var soundFontName = ""
     @Published var selectedProgram = 0
+    @Published var waveformComparison: WaveformComparison?
 
     var hasExactScoreTiming: Bool {
         analysis?.exactScoreTiming == true
@@ -64,6 +65,7 @@ final class ChartMakerModel: ObservableObject {
                 self.originalAudioURL = nil
                 self.exportZipURL = nil
                 self.preparedSongFolder = nil
+                self.waveformComparison = nil
 
                 if self.title.isEmpty || self.source == .score {
                     self.title = result.suggestedTitle
@@ -189,13 +191,25 @@ final class ChartMakerModel: ObservableObject {
             )
         }
 
-        status = "Rendering MIDI directly to 320 kbps MP3…"
-        let mp3 = try DefaultMIDIRenderer.renderPianoMP3(midiURL: midiURL)
+        status = "Rendering lossless WAV reference…"
+        let wav = try DefaultMIDIRenderer.renderPianoWAV(midiURL: midiURL)
 
-        self.analysisAudioURL = nil
-        self.originalAudioURL = nil
+        status = "Encoding WAV with FFmpeg/libmp3lame at 320 kbps…"
+        let mp3 = try FFmpegAudioConverter.wavToHighQualityMP3(wav)
+
+        status = "Comparing WAV and decoded MP3 waveforms…"
+        let comparison = try? await WaveformQualityChecker.compare(
+            referenceWAV: wav,
+            encodedMP3: mp3
+        )
+
+        self.analysisAudioURL = wav
+        self.originalAudioURL = wav
         self.audioURL = mp3
-        self.status = "Exact score timing • built-in piano • AstroDX MP3 ready."
+        self.waveformComparison = comparison
+        self.status = comparison.map {
+            "Exact score • FFmpeg MP3 ready • \($0.summary)"
+        } ?? "Exact score timing • FFmpeg 320 kbps MP3 ready."
         prepareExport()
     }
 
@@ -215,17 +229,29 @@ final class ChartMakerModel: ObservableObject {
             )
         }
 
-        status = "Rendering \(selectedInstrumentName) directly to 320 kbps MP3…"
-        let mp3 = try await SoundFontRenderer.renderMP3(
+        status = "Rendering \(selectedInstrumentName) to lossless WAV…"
+        let wav = try await SoundFontRenderer.renderWAV(
             midiURL: midiURL,
             bankURL: soundFontURL,
             program: selectedProgram
         )
 
-        self.analysisAudioURL = nil
-        self.originalAudioURL = nil
+        status = "Encoding WAV with FFmpeg/libmp3lame at 320 kbps…"
+        let mp3 = try FFmpegAudioConverter.wavToHighQualityMP3(wav)
+
+        status = "Comparing WAV and decoded MP3 waveforms…"
+        let comparison = try? await WaveformQualityChecker.compare(
+            referenceWAV: wav,
+            encodedMP3: mp3
+        )
+
+        self.analysisAudioURL = wav
+        self.originalAudioURL = wav
         self.audioURL = mp3
-        self.status = "Exact score timing • rendered \(selectedInstrumentName) • AstroDX audio ready."
+        self.waveformComparison = comparison
+        self.status = comparison.map {
+            "Exact score • \(self.selectedInstrumentName) • \($0.summary)"
+        } ?? "Exact score timing • rendered \(selectedInstrumentName) • FFmpeg MP3 ready."
         prepareExport()
     }
 
