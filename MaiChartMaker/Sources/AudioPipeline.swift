@@ -7,15 +7,20 @@ enum AudioPipelineError: LocalizedError {
     case cannotReadPCM
     case youtubeID
     case noPlayableYouTubeAudio
-    case allYouTubeResolversFailed
+    case allYouTubeResolversFailed(String)
 
     var errorDescription: String? {
         switch self {
-        case .noAudioTrack: return "No audio track was found."
-        case .cannotReadPCM: return "The audio stream could not be decoded."
-        case .youtubeID: return "That does not look like a valid YouTube URL."
-        case .noPlayableYouTubeAudio: return "No compatible YouTube audio stream was returned."
-        case .allYouTubeResolversFailed: return "YouTube audio could not be resolved right now. Try again or import the MP3 directly."
+        case .noAudioTrack:
+            return "The selected file does not contain a readable audio track."
+        case .cannotReadPCM:
+            return "The audio stream could not be decoded on this iPhone."
+        case .youtubeID:
+            return "That does not look like a valid YouTube or youtu.be URL."
+        case .noPlayableYouTubeAudio:
+            return "The YouTube resolver returned no iPhone-compatible audio stream."
+        case .allYouTubeResolversFailed(let detail):
+            return "YouTube audio could not be resolved. \(detail)"
         }
     }
 }
@@ -31,9 +36,15 @@ enum AudioPipeline {
         let access = source.startAccessingSecurityScopedResource()
         defer { if access { source.stopAccessingSecurityScopedResource() } }
 
+        // Validate the file itself instead of trusting its extension/UTType.
+        let sourceAsset = AVURLAsset(url: source)
+        let sourceTracks = try await sourceAsset.loadTracks(withMediaType: .audio)
+        guard !sourceTracks.isEmpty else { throw AudioPipelineError.noAudioTrack }
+
+        let ext = source.pathExtension.isEmpty ? "audio" : source.pathExtension
         let temp = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension(source.pathExtension.isEmpty ? "audio" : source.pathExtension)
+            .appendingPathExtension(ext)
 
         try? FileManager.default.removeItem(at: temp)
         try FileManager.default.copyItem(at: source, to: temp)
@@ -129,6 +140,7 @@ enum AudioPipeline {
             var block = carry
             block.append(contentsOf: floats)
             var index = 0
+
             while index + hop <= block.count {
                 let slice = block[index..<(index + hop)]
                 var sum = 0.0
@@ -205,6 +217,98 @@ enum AudioPipeline {
     static func importYouTube(_ rawURL: String) async throws -> YouTubeMetadata {
         guard let videoID = youtubeVideoID(rawURL) else { throw AudioPipelineError.youtubeID }
 
+        var failures: [String] = []
+
+        do {
+            return try await importYouTubeViaInvidious(videoID: videoID)
+        } catch {
+            failures.append("Invidious: \(error.localizedDescription)")
+        }
+
+        do {
+            return try await importYouTubeViaPiped(videoID: videoID)
+        } catch {
+            failures.append("Piped: \(error.localizedDescription)")
+        }
+
+        throw AudioPipelineError.allYouTubeResolversFailed(
+            failures.joined(separator: " • ") + ". You can still import the MP3/M4A from Files."
+        )
+    }
+
+    private static func importYouTubeViaInvidious(videoID: String) async throws -> YouTubeMetadata {
+        let instances = [
+            "https://inv.nadeko.net",
+            "https://invidious.nerdvpn.de",
+            "https://yt.chocolatemoo53.com",
+            "https://invidious.tiekoetter.com"
+        ]
+
+        var lastError: Error = AudioPipelineError.noPlayableYouTubeAudio
+
+        for base in instances {
+            do {
+                guard let apiURL = URL(string: "\(base)/api/v1/videos/\(videoID)") else { continue }
+                var request = URLRequest(url: apiURL)
+                request.timeoutInterval = 15
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                request.setValue("MaiChartMaker/1.1 iOS", forHTTPHeaderField: "User-Agent")
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse,
+                      (200..<300).contains(http.statusCode) else { continue }
+
+                let info = try JSONDecoder().decode(InvidiousVideo.self, from: data)
+
+                let audioFormats = info.adaptiveFormats
+                    .filter { $0.type.lowercased().contains("audio/") }
+                    .sorted { bitrateValue($0.bitrate) > bitrateValue($1.bitrate) }
+
+                let preferred = audioFormats.first(where: {
+                    $0.type.lowercased().contains("audio/mp4") ||
+                    $0.container?.lowercased() == "m4a"
+                }) ?? audioFormats.first
+
+                guard let format = preferred else {
+                    lastError = AudioPipelineError.noPlayableYouTubeAudio
+                    continue
+                }
+
+                // Prefer the instance's local proxy so the media is fetched from
+                // the same resolver IP; this avoids many expiring/403 stream URLs.
+                let localURL = makeLatestVersionURL(base: base, videoID: videoID, itag: format.itag)
+                let downloaded: URL
+
+                if let localURL {
+                    do {
+                        downloaded = try await downloadMedia(localURL, extension: "m4a")
+                    } catch {
+                        guard let direct = URL(string: format.url) else { throw error }
+                        downloaded = try await downloadMedia(direct, extension: "m4a")
+                    }
+                } else {
+                    guard let direct = URL(string: format.url) else {
+                        throw AudioPipelineError.noPlayableYouTubeAudio
+                    }
+                    downloaded = try await downloadMedia(direct, extension: "m4a")
+                }
+
+                let mp3 = try await transcodeToMP3(downloaded)
+                return YouTubeMetadata(
+                    title: info.title ?? "YouTube \(videoID)",
+                    artist: info.author ?? "YouTube",
+                    downloadedURL: mp3
+                )
+            } catch {
+                lastError = error
+                continue
+            }
+        }
+
+        throw lastError
+    }
+
+    private static func importYouTubeViaPiped(videoID: String) async throws -> YouTubeMetadata {
         let instances = [
             "https://pipedapi.kavin.rocks",
             "https://pipedapi.tokhmi.xyz",
@@ -215,48 +319,82 @@ enum AudioPipeline {
             "https://pipedapi.colinslegacy.com"
         ]
 
+        var lastError: Error = AudioPipelineError.noPlayableYouTubeAudio
+
         for base in instances {
             do {
                 guard let endpoint = URL(string: "\(base)/streams/\(videoID)") else { continue }
                 var request = URLRequest(url: endpoint)
                 request.timeoutInterval = 12
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { continue }
-                let info = try JSONDecoder().decode(PipedStreams.self, from: data)
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                request.setValue("MaiChartMaker/1.1 iOS", forHTTPHeaderField: "User-Agent")
 
-                let stream = info.audioStreams
-                    .filter { ($0.mimeType ?? "").contains("audio/mp4") }
-                    .sorted { ($0.bitrate ?? 0) > ($1.bitrate ?? 0) }
-                    .first
-                    ?? info.audioStreams.sorted { ($0.bitrate ?? 0) > ($1.bitrate ?? 0) }.first
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse,
+                      (200..<300).contains(http.statusCode) else { continue }
+
+                let info = try JSONDecoder().decode(PipedStreams.self, from: data)
+                let streams = info.audioStreams.sorted { ($0.bitrate ?? 0) > ($1.bitrate ?? 0) }
+
+                let stream = streams.first(where: {
+                    ($0.mimeType ?? "").lowercased().contains("audio/mp4")
+                }) ?? streams.first
 
                 guard let stream, let streamURL = URL(string: stream.url) else {
                     throw AudioPipelineError.noPlayableYouTubeAudio
                 }
 
-                var audioRequest = URLRequest(url: streamURL)
-                audioRequest.timeoutInterval = 45
-                let (audioData, audioResponse) = try await URLSession.shared.data(for: audioRequest)
-                guard let audioHTTP = audioResponse as? HTTPURLResponse,
-                      (200..<300).contains(audioHTTP.statusCode),
-                      !audioData.isEmpty else { continue }
-
-                let ext = (stream.mimeType ?? "").contains("mp4") ? "m4a" : "audio"
-                let downloaded = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("youtube-\(videoID)")
-                    .appendingPathExtension(ext)
-                try audioData.write(to: downloaded, options: .atomic)
+                let ext = (stream.mimeType ?? "").lowercased().contains("mp4") ? "m4a" : "audio"
+                let downloaded = try await downloadMedia(streamURL, extension: ext)
                 let mp3 = try await transcodeToMP3(downloaded)
+
                 return YouTubeMetadata(
                     title: info.title ?? "YouTube \(videoID)",
                     artist: info.uploader ?? "YouTube",
                     downloadedURL: mp3
                 )
             } catch {
+                lastError = error
                 continue
             }
         }
-        throw AudioPipelineError.allYouTubeResolversFailed
+
+        throw lastError
+    }
+
+    private static func downloadMedia(_ url: URL, extension ext: String) async throws -> URL {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 90
+        request.setValue("MaiChartMaker/1.1 iOS", forHTTPHeaderField: "User-Agent")
+        request.setValue("audio/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+
+        let (temporary, response) = try await URLSession.shared.download(for: request)
+        guard let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        let target = FileManager.default.temporaryDirectory
+            .appendingPathComponent("youtube-\(UUID().uuidString)")
+            .appendingPathExtension(ext)
+
+        try? FileManager.default.removeItem(at: target)
+        try FileManager.default.moveItem(at: temporary, to: target)
+        return target
+    }
+
+    private static func makeLatestVersionURL(base: String, videoID: String, itag: String) -> URL? {
+        guard var components = URLComponents(string: "\(base)/latest_version") else { return nil }
+        components.queryItems = [
+            URLQueryItem(name: "id", value: videoID),
+            URLQueryItem(name: "itag", value: itag),
+            URLQueryItem(name: "local", value: "true")
+        ]
+        return components.url
+    }
+
+    private static func bitrateValue(_ value: String?) -> Int {
+        Int(value ?? "") ?? 0
     }
 
     private static func floatData(from sample: CMSampleBuffer) -> [Float]? {
@@ -280,23 +418,40 @@ enum AudioPipeline {
     private static func youtubeVideoID(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed) else { return nil }
+
         if url.host?.contains("youtu.be") == true {
             return url.pathComponents.dropFirst().first
         }
+
         if url.host?.contains("youtube.com") == true || url.host?.contains("music.youtube.com") == true {
             if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
                let value = components.queryItems?.first(where: { $0.name == "v" })?.value,
                !value.isEmpty {
                 return value
             }
+
             let parts = url.pathComponents
-            if let index = parts.firstIndex(where: { $0 == "shorts" || $0 == "embed" }),
+            if let index = parts.firstIndex(where: { $0 == "shorts" || $0 == "embed" || $0 == "live" }),
                parts.indices.contains(index + 1) {
                 return parts[index + 1]
             }
         }
         return nil
     }
+}
+
+private struct InvidiousVideo: Decodable {
+    let title: String?
+    let author: String?
+    let adaptiveFormats: [InvidiousFormat]
+}
+
+private struct InvidiousFormat: Decodable {
+    let url: String
+    let itag: String
+    let type: String
+    let bitrate: String?
+    let container: String?
 }
 
 private struct PipedStreams: Decodable {
