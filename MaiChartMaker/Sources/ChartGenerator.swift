@@ -466,6 +466,194 @@ enum ChartGenerator {
         )
     }
 
+    private static func enrichRemaster(
+        _ source: [FamilyEvent],
+        analysis: AudioAnalysis,
+        totalSteps: Int,
+        seed: UInt64
+    ) -> [FamilyEvent] {
+        var rng = SplitMix64(seed: seed)
+        var byStep = Dictionary(
+            uniqueKeysWithValues: source.map { ($0.step, $0) }
+        )
+
+        // 1) Follow substantially more of the melody than lower charts do.
+        var previousPitch: UInt8?
+        var melodyLane = source.first?.lane ?? rng.int(in: 1...8)
+
+        for index in analysis.melodyBeatPositions.indices {
+            guard analysis.melodyPitches.indices.contains(index) else { continue }
+
+            let step = Int((analysis.melodyBeatPositions[index] * 4.0).rounded())
+            guard step >= 0, step < totalSteps else { continue }
+
+            let pitch = analysis.melodyPitches[index]
+            let strength = analysis.melodyStrengths.indices.contains(index)
+                ? analysis.melodyStrengths[index]
+                : 0.60
+
+            var interval = 0
+            if let previousPitch {
+                interval = Int(pitch) - Int(previousPitch)
+            }
+
+            let fallback = interval == 0
+                ? (rng.chance(0.5) ? 1 : -1)
+                : (interval > 0 ? 1 : -1)
+
+            melodyLane = wrapped(
+                melodyLane + melodyLaneDelta(
+                    interval: interval,
+                    fallback: fallback,
+                    rng: &rng
+                )
+            )
+
+            let existing = byStep[step]
+            let baseLane = existing?.lane ?? melodyLane
+            let drumStrength = existing?.drumStrength ?? 0
+            let drumNote = existing?.drumNote
+
+            let gesture: Gesture
+            if strength >= 0.90, step % 16 == 0, rng.chance(0.30) {
+                gesture = .centerHold(rng.chance(0.45) ? "4:2" : "4:1")
+            } else if strength >= 0.74, rng.chance(0.34) {
+                gesture = .double(wrapped(baseLane + (rng.chance(0.5) ? 4 : 3)))
+            } else if abs(interval) >= 7, rng.chance(0.46) {
+                gesture = .slide(
+                    destination: wrapped(
+                        baseLane +
+                        (interval >= 0 ? 1 : -1) *
+                        min(4, max(2, abs(interval) / 2))
+                    ),
+                    duration: strength >= 0.84 ? "8:1" : "4:1"
+                )
+            } else {
+                gesture = existing?.gesture ?? .tap
+            }
+
+            byStep[step] = FamilyEvent(
+                step: step,
+                lane: baseLane,
+                gesture: gesture,
+                strength: max(existing?.strength ?? 0, strength),
+                drumStrength: drumStrength,
+                drumNote: drumNote,
+                melodyPitch: pitch,
+                melodyStrength: max(existing?.melodyStrength ?? 0, strength),
+                melodicInterval: interval,
+                importance: max(existing?.importance ?? 0, 0.46 + strength * 0.42),
+                phrase: existing?.phrase ?? step / 64
+            )
+
+            previousPitch = pitch
+        }
+
+        // 2) Boss-chart ring runs: eight 16th notes travelling around the
+        // cabinet. These are intentionally low-importance so MASTER can
+        // simplify them away while Re:MASTER keeps the complete run.
+        let phraseLength = 64
+        let phraseCount = max(1, Int(ceil(Double(totalSteps) / Double(phraseLength))))
+
+        for phrase in 1..<phraseCount {
+            guard phrase % 2 == 1 else { continue }
+
+            let start = phrase * phraseLength
+            let end = min(totalSteps, start + phraseLength)
+            let candidates = byStep.values.filter {
+                $0.step >= start &&
+                $0.step < end &&
+                $0.melodyStrength >= 0.62
+            }
+
+            guard let anchor = candidates.max(by: {
+                ($0.melodyStrength + $0.strength) <
+                ($1.melodyStrength + $1.strength)
+            }) else {
+                continue
+            }
+
+            let runStart = min(max(start, anchor.step), max(start, end - 9))
+            let direction = anchor.melodicInterval < 0 ? -1 : 1
+            let firstLane = anchor.lane
+
+            for offset in 0..<8 {
+                let step = runStart + offset
+                guard step < end, step < totalSteps else { break }
+
+                let lane = wrapped(firstLane + direction * offset)
+                let old = byStep[step]
+
+                byStep[step] = FamilyEvent(
+                    step: step,
+                    lane: lane,
+                    gesture: .tap,
+                    strength: max(old?.strength ?? 0, 0.68),
+                    drumStrength: old?.drumStrength ?? 0,
+                    drumNote: old?.drumNote,
+                    melodyPitch: old?.melodyPitch,
+                    melodyStrength: max(old?.melodyStrength ?? 0, 0.64),
+                    melodicInterval: old?.melodicInterval ?? direction * 2,
+                    importance: min(old?.importance ?? 0.23, 0.26),
+                    phrase: phrase
+                )
+            }
+
+            // Full-ring EACH burst at selected climaxes. simai supports
+            // multiple simultaneous notes separated by '/'.
+            let burstStep = runStart + 8
+            if burstStep < end, burstStep < totalSteps, phrase % 4 == 3 {
+                let old = byStep[burstStep]
+                byStep[burstStep] = FamilyEvent(
+                    step: burstStep,
+                    lane: old?.lane ?? firstLane,
+                    gesture: .ring([1, 2, 3, 4, 5, 6, 7, 8]),
+                    strength: max(old?.strength ?? 0, 0.92),
+                    drumStrength: max(old?.drumStrength ?? 0, 0.76),
+                    drumNote: old?.drumNote,
+                    melodyPitch: old?.melodyPitch,
+                    melodyStrength: max(old?.melodyStrength ?? 0, 0.76),
+                    melodicInterval: old?.melodicInterval ?? 0,
+                    importance: 0.24,
+                    phrase: phrase
+                )
+            }
+        }
+
+        // 3) Add center TOUCH HOLD punctuation near a few strong phrase
+        // boundaries. This is the real simai C-sensor hold, not a lane hold.
+        for step in stride(from: 96, to: totalSteps, by: 128) {
+            guard step < totalSteps else { break }
+
+            let nearby = byStep.values
+                .filter { abs($0.step - step) <= 4 }
+                .max(by: {
+                    ($0.melodyStrength + $0.drumStrength) <
+                    ($1.melodyStrength + $1.drumStrength)
+                })
+
+            guard let anchor = nearby else { continue }
+
+            byStep[anchor.step] = FamilyEvent(
+                step: anchor.step,
+                lane: anchor.lane,
+                gesture: .centerHold(
+                    anchor.melodyStrength >= 0.82 ? "4:2" : "4:1"
+                ),
+                strength: max(anchor.strength, 0.82),
+                drumStrength: anchor.drumStrength,
+                drumNote: anchor.drumNote,
+                melodyPitch: anchor.melodyPitch,
+                melodyStrength: max(anchor.melodyStrength, 0.72),
+                melodicInterval: anchor.melodicInterval,
+                importance: max(anchor.importance, 0.34),
+                phrase: anchor.phrase
+            )
+        }
+
+        return byStep.values.sorted { $0.step < $1.step }
+    }
+
     private static func simplify(
         _ parentEvents: [FamilyEvent],
         for difficulty: ChartDifficulty
@@ -537,6 +725,13 @@ enum ChartGenerator {
                 return source.importance >= 0.64 ? .breakTap : .tap
             case .hold(let duration):
                 return .hold(duration)
+            case .centerHold(let duration):
+                return source.importance >= 0.52 ? .hold(duration) : .tap
+            case .ring(let lanes):
+                if source.importance >= 0.52, lanes.count >= 2 {
+                    return .double(lanes[1])
+                }
+                return .tap
             case .tap:
                 return .tap
             }
@@ -557,6 +752,8 @@ enum ChartGenerator {
                 return source.drumStrength >= 0.82
                     ? .breakTap
                     : .tap
+            case .centerHold, .ring:
+                return .tap
             case .tap:
                 return .tap
             }
@@ -632,6 +829,12 @@ enum ChartGenerator {
 
         case .slide(let destination, let duration):
             return "\(event.lane)-\(destination)[\(duration)]"
+
+        case .centerHold(let duration):
+            return "Ch[\(duration)]"
+
+        case .ring(let lanes):
+            return lanes.map(String.init).joined(separator: "/")
         }
     }
 
