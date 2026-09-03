@@ -55,6 +55,25 @@ struct AudioAnalysis: Sendable {
         self.melodyPitches = melodyPitches
         self.melodyStrengths = melodyStrengths
     }
+    func replacingFirstBeat(_ value: Double) -> AudioAnalysis {
+        AudioAnalysis(
+            duration: duration,
+            bpm: bpm,
+            firstBeat: max(0, value),
+            onsets: onsets,
+            strengths: strengths,
+            beatPositions: beatPositions,
+            durationBeats: durationBeats,
+            tempoMap: tempoMap,
+            exactScoreTiming: exactScoreTiming,
+            drumBeatPositions: drumBeatPositions,
+            drumStrengths: drumStrengths,
+            drumNoteNumbers: drumNoteNumbers,
+            melodyBeatPositions: melodyBeatPositions,
+            melodyPitches: melodyPitches,
+            melodyStrengths: melodyStrengths
+        )
+    }
 }
 
 enum ChartDifficulty: Int, CaseIterable, Identifiable, Sendable {
