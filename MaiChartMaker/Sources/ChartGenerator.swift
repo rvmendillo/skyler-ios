@@ -2,18 +2,22 @@ import Foundation
 
 enum ChartGenerator {
     static func generateAll(analysis: AudioAnalysis) -> [GeneratedChart] {
-        // One musical "idea seed" per generation pass. Every difficulty shares
-        // the same song structure but interprets it differently.
         let generationSeed = UInt64.random(in: UInt64.min...UInt64.max)
+        let blueprint = buildBlueprint(analysis: analysis, seed: generationSeed)
 
         return ChartDifficulty.allCases.map { difficulty in
-            GeneratedChart(
+            let familyEvents = simplify(
+                blueprint,
+                for: difficulty
+            )
+
+            return GeneratedChart(
                 difficulty: difficulty,
                 level: suggestedLevel(for: difficulty, analysis: analysis),
-                noteText: generate(
-                    difficulty: difficulty,
+                noteText: render(
+                    events: familyEvents,
                     analysis: analysis,
-                    seed: generationSeed &+ UInt64(difficulty.rawValue) &* 0x9E3779B97F4A7C15
+                    totalSteps: blueprint.totalSteps
                 )
             )
         }
@@ -33,7 +37,7 @@ enum ChartGenerator {
         lines.append("&first=\(String(format: "%.4f", analysis.firstBeat))")
         lines.append("&track=\(trackFilename)")
         lines.append("&des=MaiChart Maker")
-        lines.append("&smsg=Humanized phrase-aware auto chart; remix or edit freely.")
+        lines.append("&smsg=Hierarchical drum + melody chart family; lower levels practice the same patterns as higher levels.")
 
         for chart in charts.sorted(by: { $0.difficulty.rawValue < $1.difficulty.rawValue }) {
             lines.append("&lv_\(chart.difficulty.rawValue)=\(chart.level)")
@@ -47,9 +51,13 @@ enum ChartGenerator {
         return lines.joined(separator: "\n")
     }
 
-    private static func suggestedLevel(for difficulty: ChartDifficulty, analysis: AudioAnalysis) -> String {
+    private static func suggestedLevel(
+        for difficulty: ChartDifficulty,
+        analysis: AudioAnalysis
+    ) -> String {
         let density = Double(analysis.onsets.count) / max(1, analysis.duration)
         let base: Double
+
         switch difficulty {
         case .easy: base = 1.8
         case .basic: base = 3.6
@@ -61,17 +69,22 @@ enum ChartGenerator {
 
         let tempoBonus = max(0, (analysis.bpm - 110) / 45)
         let densityBonus = min(2.0, density / 2.5)
-        let value = min(14.9, base + tempoBonus + densityBonus)
+        let rhythmicBonus = analysis.drumBeatPositions.isEmpty
+            ? 0
+            : min(0.7, Double(analysis.drumBeatPositions.count) / max(1, analysis.duration) / 5.0)
+
+        let value = min(14.9, base + tempoBonus + densityBonus + rhythmicBonus)
         let rounded = (value * 10).rounded() / 10
 
         if rounded >= 10 {
             let whole = Int(floor(rounded))
             return rounded - Double(whole) >= 0.6 ? "\(whole)+" : "\(whole)"
         }
+
         return "\(max(1, Int(rounded.rounded())))"
     }
 
-    private enum PhraseMotion: CaseIterable {
+    private enum PhraseMotion: CaseIterable, Equatable {
         case orbitCW
         case orbitCCW
         case mirror
@@ -82,19 +95,47 @@ enum ChartGenerator {
         case scattered
     }
 
-    private enum Gesture {
+    private enum Gesture: Equatable {
         case tap
-        case hold
-        case double
+        case hold(String)
+        case double(Int)
         case breakTap
-        case slide
+        case slide(destination: Int, duration: String)
     }
 
-    private static func generate(
-        difficulty: ChartDifficulty,
+    private struct FamilyEvent {
+        let step: Int
+        let lane: Int
+        let gesture: Gesture
+        let strength: Double
+        let drumStrength: Double
+        let drumNote: UInt8?
+        let melodyPitch: UInt8?
+        let melodyStrength: Double
+        let melodicInterval: Int
+        let importance: Double
+        let phrase: Int
+    }
+
+    private struct Blueprint {
+        let events: [FamilyEvent]
+        let totalSteps: Int
+    }
+
+    private struct StepDrum {
+        let strength: Double
+        let note: UInt8?
+    }
+
+    private struct StepMelody {
+        let pitch: UInt8
+        let strength: Double
+    }
+
+    private static func buildBlueprint(
         analysis: AudioAnalysis,
         seed: UInt64
-    ) -> String {
+    ) -> Blueprint {
         var rng = SplitMix64(seed: seed)
         let bpm = max(1, analysis.bpm)
         let secondsPerStep = 60.0 / bpm / 4.0
@@ -118,15 +159,18 @@ enum ChartGenerator {
             for (index, beat) in beats.enumerated() {
                 let step = Int((beat * 4.0).rounded())
                 guard step >= 0 && step < totalSteps else { continue }
+
                 let strength = normalizedStrengths.indices.contains(index)
                     ? normalizedStrengths[index]
                     : 0.5
                 onsetByStep[step] = max(onsetByStep[step] ?? 0, strength)
             }
         } else {
-            for (index, onset) in analysis.onsets.enumerated() where onset >= analysis.firstBeat {
+            for (index, onset) in analysis.onsets.enumerated()
+            where onset >= analysis.firstBeat {
                 let step = Int(((onset - analysis.firstBeat) / secondsPerStep).rounded())
                 guard step >= 0 && step < totalSteps else { continue }
+
                 let strength = normalizedStrengths.indices.contains(index)
                     ? normalizedStrengths[index]
                     : 0.5
@@ -134,15 +178,59 @@ enum ChartGenerator {
             }
         }
 
-        let phraseLength = 64 // four 4/4 bars at 16th-note resolution
-        let phraseCount = max(1, Int(ceil(Double(totalSteps) / Double(phraseLength))))
-        var tokens = Array(repeating: "", count: totalSteps + 1)
+        var drumByStep: [Int: StepDrum] = [:]
+        for index in analysis.drumBeatPositions.indices {
+            let step = Int((analysis.drumBeatPositions[index] * 4.0).rounded())
+            guard step >= 0 && step < totalSteps else { continue }
 
+            let strength = analysis.drumStrengths.indices.contains(index)
+                ? analysis.drumStrengths[index]
+                : 0.65
+            let note = analysis.drumNoteNumbers.indices.contains(index)
+                ? analysis.drumNoteNumbers[index]
+                : nil
+
+            if let old = drumByStep[step] {
+                if strength > old.strength {
+                    drumByStep[step] = StepDrum(strength: strength, note: note)
+                }
+            } else {
+                drumByStep[step] = StepDrum(strength: strength, note: note)
+            }
+        }
+
+        var melodyByStep: [Int: StepMelody] = [:]
+        for index in analysis.melodyBeatPositions.indices {
+            let step = Int((analysis.melodyBeatPositions[index] * 4.0).rounded())
+            guard step >= 0 && step < totalSteps else { continue }
+            guard analysis.melodyPitches.indices.contains(index) else { continue }
+
+            let pitch = analysis.melodyPitches[index]
+            let strength = analysis.melodyStrengths.indices.contains(index)
+                ? analysis.melodyStrengths[index]
+                : 0.65
+
+            if let old = melodyByStep[step] {
+                if pitch > old.pitch || (pitch == old.pitch && strength > old.strength) {
+                    melodyByStep[step] = StepMelody(pitch: pitch, strength: strength)
+                }
+            } else {
+                melodyByStep[step] = StepMelody(pitch: pitch, strength: strength)
+            }
+        }
+
+        let hasDrums = !drumByStep.isEmpty
+        let hasMelody = !melodyByStep.isEmpty
+        let phraseLength = 64
+        let phraseCount = max(1, Int(ceil(Double(totalSteps) / Double(phraseLength))))
+
+        var events: [FamilyEvent] = []
         var lane = rng.int(in: 1...8)
         var lastPlaced = -999
         var lastGesture: Gesture = .tap
         var previousMotion: PhraseMotion?
         var previousMotif: [Int] = []
+        var previousMelodyPitch: UInt8?
         var noteNumber = 0
 
         for phrase in 0..<phraseCount {
@@ -150,121 +238,187 @@ enum ChartGenerator {
             let end = min(totalSteps, start + phraseLength)
             guard start < end else { continue }
 
-            let phraseStrength = averageOnsetStrength(
+            let phraseStrength = averageCombinedStrength(
                 start: start,
                 end: end,
-                onsetByStep: onsetByStep
+                onsetByStep: onsetByStep,
+                drumByStep: drumByStep,
+                melodyByStep: melodyByStep
             )
 
-            var motion = PhraseMotion.allCases[rng.int(in: 0..<(PhraseMotion.allCases.count))]
+            var motion = PhraseMotion.allCases[
+                rng.int(in: 0..<PhraseMotion.allCases.count)
+            ]
+
             if motion == previousMotion {
                 motion = PhraseMotion.allCases[
-                    (PhraseMotion.allCases.firstIndex(of: motion)! + 1 + rng.int(in: 0...2))
+                    (PhraseMotion.allCases.firstIndex(of: motion)! +
+                     1 +
+                     rng.int(in: 0...2))
                     % PhraseMotion.allCases.count
                 ]
             }
 
             var motif = motifFor(
                 motion: motion,
-                difficulty: difficulty,
                 rng: &rng
             )
 
-            // Human-chart-like callback: occasionally reuse a previous idea but
-            // transpose/mirror it instead of repeating it verbatim.
-            if phrase > 0, !previousMotif.isEmpty, rng.chance(difficulty.rawValue >= 4 ? 0.30 : 0.18) {
+            if phrase > 0,
+               !previousMotif.isEmpty,
+               rng.chance(0.31) {
                 motif = previousMotif.map { rng.chance(0.5) ? -$0 : $0 }
-                if rng.chance(0.45) { motif.rotateLeft(by: rng.int(in: 1...max(1, motif.count - 1))) }
+                if rng.chance(0.45) {
+                    motif.rotateLeft(
+                        by: rng.int(in: 1...max(1, motif.count - 1))
+                    )
+                }
             }
 
             previousMotion = motion
             previousMotif = motif
 
-            let breathingRoom = phraseStrength < 0.30
-                ? rng.int(in: 4...12)
-                : rng.int(in: 0...6)
-            let restStart = start + rng.int(in: 0...max(0, phraseLength - breathingRoom - 1))
+            let breathingRoom = phraseStrength < 0.28
+                ? rng.int(in: 5...11)
+                : rng.int(in: 0...5)
+            let restStart = start + rng.int(
+                in: 0...max(0, phraseLength - breathingRoom - 1)
+            )
             let restEnd = min(end, restStart + breathingRoom)
-
             var motifIndex = 0
 
             for step in start..<end {
-                let strength = onsetByStep[step] ?? 0
+                let onset = onsetByStep[step] ?? 0
+                let drum = drumByStep[step]
+                let melody = melodyByStep[step]
+                let drumStrength = drum?.strength ?? 0
+                let melodyStrength = melody?.strength ?? 0
+
                 let sixteenth = step % 4
-                let beat = step % 16
+                let beatInBar = step % 16
+                let quarterAccent = sixteenth == 0 ? 0.13 : 0
+                let eighthAccent = sixteenth == 2 ? 0.05 : 0
+                let barAccent = beatInBar == 0 ? 0.12 : 0
 
-                let accent: Double
-                switch sixteenth {
-                case 0: accent = 0.23
-                case 2: accent = difficulty.rawValue >= 3 ? 0.09 : 0.03
-                default: accent = difficulty.rawValue >= 4 ? 0.05 : 0
+                let score: Double
+                if hasDrums {
+                    score =
+                        onset * 0.28 +
+                        drumStrength * 0.82 +
+                        melodyStrength * 0.30 +
+                        quarterAccent +
+                        eighthAccent +
+                        barAccent
+                } else {
+                    score =
+                        onset * 0.73 +
+                        melodyStrength * 0.38 +
+                        quarterAccent +
+                        eighthAccent +
+                        barAccent
                 }
 
-                let barAccent = beat == 0 ? 0.10 : 0
-                let jitter = rng.double(in: -0.08...0.10)
-                let score = strength + accent + barAccent + jitter
+                var candidate =
+                    score + rng.double(in: -0.055...0.075) >= 0.36
 
-                let threshold: Double
-                switch difficulty {
-                case .easy: threshold = 0.76
-                case .basic: threshold = 0.67
-                case .advanced: threshold = 0.56
-                case .expert: threshold = 0.46
-                case .master: threshold = 0.38
-                case .remaster: threshold = 0.32
-                }
-
-                var candidate = score >= threshold
-
-                // Musical pickup/syncopation: harder charts may deliberately
-                // place a weak-note response between stronger detected hits.
-                if !candidate, difficulty.rawValue >= 4, sixteenth != 0 {
-                    let nearbyStrong = max(
-                        onsetByStep[step - 1] ?? 0,
-                        onsetByStep[step + 1] ?? 0
-                    )
-                    candidate = nearbyStrong > 0.72 && rng.chance(0.18 + Double(difficulty.rawValue) * 0.025)
-                }
-
-                // Easy/Basic keep strong pulse anchors without machine-gunning
-                // every beat.
-                if !candidate, sixteenth == 0, rng.chance(difficulty.density * 0.26) {
+                if drumStrength >= 0.48 {
                     candidate = true
                 }
 
-                if step >= restStart && step < restEnd, strength < 0.82 {
+                if hasMelody,
+                   melodyStrength >= 0.78,
+                   sixteenth != 1 || rng.chance(0.7) {
+                    candidate = true
+                }
+
+                if step >= restStart,
+                   step < restEnd,
+                   drumStrength < 0.72,
+                   melodyStrength < 0.82 {
                     candidate = false
                 }
 
                 guard candidate else { continue }
-                guard step - lastPlaced >= difficulty.minimumGapSteps else { continue }
+                guard step - lastPlaced >= 1 else { continue }
 
-                let delta = motif[motifIndex % motif.count]
+                let motifDelta = motif[motifIndex % motif.count]
                 motifIndex += 1
 
-                lane = wrapped(lane + delta)
+                var melodicInterval = 0
+                let laneDelta: Int
 
-                // Add a small human positional surprise, but not on every note.
-                if difficulty.rawValue >= 3, rng.chance(0.16) {
-                    lane = wrapped(lane + (rng.chance(0.5) ? 1 : -1) * rng.int(in: 1...2))
+                if let melody {
+                    if let previousMelodyPitch {
+                        melodicInterval =
+                            Int(melody.pitch) - Int(previousMelodyPitch)
+                    }
+
+                    laneDelta = melodyLaneDelta(
+                        interval: melodicInterval,
+                        fallback: motifDelta,
+                        rng: &rng
+                    )
+                    previousMelodyPitch = melody.pitch
+                } else {
+                    laneDelta = motifDelta
+                }
+
+                lane = wrapped(lane + laneDelta)
+
+                if melody == nil,
+                   drumStrength < 0.70,
+                   rng.chance(0.11) {
+                    lane = wrapped(
+                        lane +
+                        (rng.chance(0.5) ? 1 : -1) *
+                        rng.int(in: 1...2)
+                    )
                 }
 
                 noteNumber += 1
-                let gesture = chooseGesture(
-                    difficulty: difficulty,
+
+                let strength = max(
+                    onset,
+                    drumStrength,
+                    melodyStrength
+                )
+
+                let gesture = chooseSourceGesture(
                     strength: strength,
+                    drumStrength: drumStrength,
+                    drumNote: drum?.note,
+                    melodyStrength: melodyStrength,
+                    melodicInterval: melodicInterval,
                     phraseStrength: phraseStrength,
                     lastGesture: lastGesture,
                     noteNumber: noteNumber,
+                    lane: lane,
                     rng: &rng
                 )
 
-                tokens[step] = token(
-                    gesture: gesture,
-                    lane: lane,
-                    strength: strength,
-                    difficulty: difficulty,
-                    rng: &rng
+                let importance = eventImportance(
+                    step: step,
+                    onset: onset,
+                    drumStrength: drumStrength,
+                    melodyStrength: melodyStrength,
+                    melodicInterval: melodicInterval,
+                    stableNoise: rng.double(in: 0...0.12)
+                )
+
+                events.append(
+                    FamilyEvent(
+                        step: step,
+                        lane: lane,
+                        gesture: gesture,
+                        strength: strength,
+                        drumStrength: drumStrength,
+                        drumNote: drum?.note,
+                        melodyPitch: melody?.pitch,
+                        melodyStrength: melodyStrength,
+                        melodicInterval: melodicInterval,
+                        importance: importance,
+                        phrase: phrase
+                    )
                 )
 
                 lastGesture = gesture
@@ -272,193 +426,404 @@ enum ChartGenerator {
             }
         }
 
+        return Blueprint(
+            events: events,
+            totalSteps: totalSteps
+        )
+    }
+
+    private static func simplify(
+        _ blueprint: Blueprint,
+        for difficulty: ChartDifficulty
+    ) -> [FamilyEvent] {
+        let threshold: Double
+        switch difficulty {
+        case .remaster: threshold = 0.00
+        case .master: threshold = 0.27
+        case .expert: threshold = 0.43
+        case .advanced: threshold = 0.57
+        case .basic: threshold = 0.69
+        case .easy: threshold = 0.80
+        }
+
+        var output: [FamilyEvent] = []
+        var lastStep = -999
+
+        for source in blueprint.events {
+            guard source.importance >= threshold else { continue }
+            guard source.step - lastStep >= difficulty.minimumGapSteps else {
+                continue
+            }
+
+            let simplified = FamilyEvent(
+                step: source.step,
+                lane: source.lane,
+                gesture: simplifiedGesture(
+                    source.gesture,
+                    source: source,
+                    difficulty: difficulty
+                ),
+                strength: source.strength,
+                drumStrength: source.drumStrength,
+                drumNote: source.drumNote,
+                melodyPitch: source.melodyPitch,
+                melodyStrength: source.melodyStrength,
+                melodicInterval: source.melodicInterval,
+                importance: source.importance,
+                phrase: source.phrase
+            )
+
+            output.append(simplified)
+            lastStep = source.step
+        }
+
+        return output
+    }
+
+    private static func simplifiedGesture(
+        _ gesture: Gesture,
+        source: FamilyEvent,
+        difficulty: ChartDifficulty
+    ) -> Gesture {
+        switch difficulty {
+        case .remaster:
+            return gesture
+
+        case .master:
+            switch gesture {
+            case .slide(let destination, let duration):
+                return source.importance >= 0.55
+                    ? .slide(destination: destination, duration: duration)
+                    : .tap
+            case .double(let other):
+                return source.drumStrength >= 0.62
+                    ? .double(other)
+                    : .tap
+            case .breakTap:
+                return source.importance >= 0.64 ? .breakTap : .tap
+            case .hold(let duration):
+                return .hold(duration)
+            case .tap:
+                return .tap
+            }
+
+        case .expert:
+            switch gesture {
+            case .slide:
+                return .tap
+            case .double(let other):
+                return source.drumStrength >= 0.78
+                    ? .double(other)
+                    : .tap
+            case .hold(let duration):
+                return source.importance >= 0.62
+                    ? .hold(duration)
+                    : .tap
+            case .breakTap:
+                return source.drumStrength >= 0.82
+                    ? .breakTap
+                    : .tap
+            case .tap:
+                return .tap
+            }
+
+        case .advanced:
+            if case .hold(let duration) = gesture,
+               source.importance >= 0.72 {
+                return .hold(duration)
+            }
+            return .tap
+
+        case .basic, .easy:
+            return .tap
+        }
+    }
+
+    private static func render(
+        events: [FamilyEvent],
+        analysis: AudioAnalysis,
+        totalSteps: Int
+    ) -> String {
+        var eventByStep: [Int: FamilyEvent] = [:]
+        for event in events {
+            eventByStep[event.step] = event
+        }
+
         var tempoByStep: [Int: Double] = [:]
         if analysis.exactScoreTiming {
             for point in analysis.tempoMap.dropFirst() {
                 let step = Int((point.beat * 4.0).rounded())
-                if step >= 0 && step < tokens.count {
+                if step >= 0 && step <= totalSteps {
                     tempoByStep[step] = point.bpm
                 }
             }
         }
 
-        var body = "(\(String(format: "%.3f", bpm))){16},\n"
-        for i in tokens.indices {
-            if let changedBPM = tempoByStep[i] {
+        var body =
+            "(\(String(format: "%.3f", max(1, analysis.bpm)))){16},\n"
+
+        for step in 0...totalSteps {
+            if let changedBPM = tempoByStep[step] {
                 body += "(\(String(format: "%.3f", changedBPM)))"
             }
-            body += tokens[i]
+
+            if let event = eventByStep[step] {
+                body += token(for: event)
+            }
+
             body += ","
-            if (i + 1) % 16 == 0 { body += "\n" }
+
+            if (step + 1) % 16 == 0 {
+                body += "\n"
+            }
         }
+
         body += "\nE"
         return body
     }
 
-    private static func motifFor(
-        motion: PhraseMotion,
-        difficulty: ChartDifficulty,
-        rng: inout SplitMix64
-    ) -> [Int] {
-        let base: [Int]
-        switch motion {
-        case .orbitCW:
-            base = [1, 1, 2, 1, -1, 1]
-        case .orbitCCW:
-            base = [-1, -1, -2, -1, 1, -1]
-        case .mirror:
-            base = [2, -2, 3, -3, 1, -1]
-        case .bounce:
-            base = [3, -2, 2, -3, 1, 2]
-        case .diagonal:
-            base = [4, -1, 3, -4, 2, -2]
-        case .answer:
-            base = [1, 2, 1, -3, -1, -2, -1, 3]
-        case .spiral:
-            base = [1, 2, 2, 3, -1, -2, -3]
-        case .scattered:
-            base = [rng.int(in: -4...4), rng.int(in: -3...3), rng.int(in: -4...4), rng.int(in: -2...2)]
-        }
+    private static func token(for event: FamilyEvent) -> String {
+        switch event.gesture {
+        case .tap:
+            return "\(event.lane)"
 
-        if difficulty.rawValue <= 2 {
-            return base.map {
-                let sign = $0 < 0 ? -1 : 1
-                return sign * min(2, max(1, abs($0)))
-            }
-        }
+        case .hold(let duration):
+            return "\(event.lane)h[\(duration)]"
 
-        return base.map { $0 == 0 ? (rng.chance(0.5) ? 1 : -1) : $0 }
+        case .double(let other):
+            return "\(event.lane)/\(other)"
+
+        case .breakTap:
+            return "\(event.lane)b"
+
+        case .slide(let destination, let duration):
+            return "\(event.lane)-\(destination)[\(duration)]"
+        }
     }
 
-    private static func chooseGesture(
-        difficulty: ChartDifficulty,
+    private static func chooseSourceGesture(
         strength: Double,
+        drumStrength: Double,
+        drumNote: UInt8?,
+        melodyStrength: Double,
+        melodicInterval: Int,
         phraseStrength: Double,
         lastGesture: Gesture,
         noteNumber: Int,
+        lane: Int,
         rng: inout SplitMix64
     ) -> Gesture {
-        guard difficulty.rawValue >= 3 else { return .tap }
-
-        let strong = strength > 0.68
-        let veryStrong = strength > 0.88
         let roll = rng.double(in: 0...1)
+        let absInterval = abs(melodicInterval)
+        var result: Gesture = .tap
 
-        var gesture: Gesture = .tap
-
-        switch difficulty {
-        case .easy, .basic:
-            gesture = .tap
-
-        case .advanced:
-            if strong && roll < 0.11 { gesture = .hold }
-
-        case .expert:
-            if veryStrong && roll < 0.10 {
-                gesture = .double
-            } else if strong && roll < 0.23 {
-                gesture = .hold
-            } else if veryStrong && roll < 0.31 {
-                gesture = .breakTap
-            }
-
-        case .master:
-            if veryStrong && roll < 0.14 {
-                gesture = .slide
-            } else if veryStrong && roll < 0.26 {
-                gesture = .double
-            } else if strong && roll < 0.38 {
-                gesture = .hold
-            } else if strong && roll < 0.48 {
-                gesture = .breakTap
-            }
-
-        case .remaster:
-            if veryStrong && roll < 0.20 {
-                gesture = .slide
-            } else if strong && roll < 0.35 {
-                gesture = .double
-            } else if strong && roll < 0.47 {
-                gesture = .hold
-            } else if roll < 0.57 && phraseStrength > 0.45 {
-                gesture = .breakTap
+        if let drumNote {
+            if isCrash(drumNote),
+               drumStrength >= 0.68,
+               roll < 0.42 {
+                result = .breakTap
+            } else if isSnare(drumNote),
+                      drumStrength >= 0.62,
+                      roll < 0.34 {
+                result = .double(
+                    wrapped(lane + (rng.chance(0.5) ? 4 : 3))
+                )
+            } else if isTom(drumNote),
+                      roll < 0.28 {
+                let destination = wrapped(
+                    lane +
+                    (rng.chance(0.5) ? 1 : -1) *
+                    rng.int(in: 2...4)
+                )
+                result = .slide(
+                    destination: destination,
+                    duration: strength > 0.85 ? "8:1" : "4:1"
+                )
             }
         }
 
-        // Prevent the "same gimmick every N notes" machine feeling.
-        if gesture == lastGesture && gesture != .tap && rng.chance(0.72) {
-            gesture = .tap
+        if result == .tap,
+           melodyStrength >= 0.62,
+           absInterval >= 5,
+           roll < 0.50 {
+            let distance = min(5, max(2, absInterval / 2))
+            let direction = melodicInterval >= 0 ? 1 : -1
+            result = .slide(
+                destination: wrapped(lane + direction * distance),
+                duration: strength > 0.82 ? "8:1" : "4:1"
+            )
         }
 
-        // Sparse highlight on phrase-sized landmarks rather than fixed modulo spam.
-        if noteNumber > 8, noteNumber % rng.int(in: 9...17) == 0, veryStrong, difficulty.rawValue >= 4 {
-            gesture = rng.chance(0.5) ? .breakTap : .double
+        if result == .tap,
+           strength >= 0.76,
+           roll < 0.24 {
+            result = .hold(strength > 0.88 ? "4:1" : "8:1")
         }
 
-        return gesture
+        if result == .tap,
+           drumStrength >= 0.72,
+           phraseStrength >= 0.42,
+           roll < 0.31 {
+            result = .breakTap
+        }
+
+        if result == lastGesture,
+           result != .tap,
+           rng.chance(0.68) {
+            result = .tap
+        }
+
+        if noteNumber > 8,
+           strength >= 0.9,
+           noteNumber % rng.int(in: 11...19) == 0 {
+            result = .breakTap
+        }
+
+        return result
     }
 
-    private static func token(
-        gesture: Gesture,
-        lane: Int,
-        strength: Double,
-        difficulty: ChartDifficulty,
+    private static func eventImportance(
+        step: Int,
+        onset: Double,
+        drumStrength: Double,
+        melodyStrength: Double,
+        melodicInterval: Int,
+        stableNoise: Double
+    ) -> Double {
+        let sixteenth = step % 4
+        let beatInBar = step % 16
+
+        let beatWeight: Double
+        if beatInBar == 0 {
+            beatWeight = 0.31
+        } else if sixteenth == 0 {
+            beatWeight = 0.22
+        } else if sixteenth == 2 {
+            beatWeight = 0.10
+        } else {
+            beatWeight = 0.02
+        }
+
+        let intervalWeight =
+            min(0.13, Double(abs(melodicInterval)) / 12.0 * 0.13)
+
+        return min(
+            1,
+            beatWeight +
+            onset * 0.17 +
+            drumStrength * 0.39 +
+            melodyStrength * 0.19 +
+            intervalWeight +
+            stableNoise
+        )
+    }
+
+    private static func melodyLaneDelta(
+        interval: Int,
+        fallback: Int,
         rng: inout SplitMix64
-    ) -> String {
-        switch gesture {
-        case .tap:
-            return "\(lane)"
+    ) -> Int {
+        guard interval != 0 else {
+            return rng.chance(0.42) ? 0 : fallback
+        }
 
-        case .hold:
-            let duration = strength > 0.82 ? "4:1" : "8:1"
-            return "\(lane)h[\(duration)]"
+        let direction = interval > 0 ? 1 : -1
+        let distance: Int
 
-        case .double:
-            var other = wrapped(lane + rng.int(in: 2...6))
-            if other == lane { other = opposite(lane) }
-            return "\(lane)/\(other)"
+        switch abs(interval) {
+        case 1...2: distance = 1
+        case 3...5: distance = 2
+        case 6...8: distance = 3
+        default: distance = 4
+        }
 
-        case .breakTap:
-            return "\(lane)b"
+        return direction * distance
+    }
 
-        case .slide:
-            let distances = difficulty == .remaster ? [2, 3, 4, 5, 6] : [2, 3, 4, 5]
-            let distance = distances[rng.int(in: 0..<distances.count)]
-            let signed = rng.chance(0.5) ? distance : -distance
-            let destination = wrapped(lane + signed)
-            let duration = strength > 0.90 ? "8:1" : (rng.chance(0.5) ? "4:1" : "8:1")
-            return "\(lane)-\(destination)[\(duration)]"
+    private static func motifFor(
+        motion: PhraseMotion,
+        rng: inout SplitMix64
+    ) -> [Int] {
+        switch motion {
+        case .orbitCW:
+            return [1, 1, 2, 1, -1, 1]
+        case .orbitCCW:
+            return [-1, -1, -2, -1, 1, -1]
+        case .mirror:
+            return [2, -2, 3, -3, 1, -1]
+        case .bounce:
+            return [3, -2, 2, -3, 1, 2]
+        case .diagonal:
+            return [4, -1, 3, -4, 2, -2]
+        case .answer:
+            return [1, 2, 1, -3, -1, -2, -1, 3]
+        case .spiral:
+            return [1, 2, 2, 3, -1, -2, -3]
+        case .scattered:
+            return [
+                nonzeroRandom(-4...4, rng: &rng),
+                nonzeroRandom(-3...3, rng: &rng),
+                nonzeroRandom(-4...4, rng: &rng),
+                nonzeroRandom(-2...2, rng: &rng)
+            ]
         }
     }
 
-    private static func averageOnsetStrength(
+    private static func nonzeroRandom(
+        _ range: ClosedRange<Int>,
+        rng: inout SplitMix64
+    ) -> Int {
+        let value = rng.int(in: range)
+        return value == 0 ? (rng.chance(0.5) ? 1 : -1) : value
+    }
+
+    private static func averageCombinedStrength(
         start: Int,
         end: Int,
-        onsetByStep: [Int: Double]
+        onsetByStep: [Int: Double],
+        drumByStep: [Int: StepDrum],
+        melodyByStep: [Int: StepMelody]
     ) -> Double {
         guard end > start else { return 0 }
-        var sum = 0.0
+
+        var total = 0.0
         var count = 0
 
         for step in start..<end {
-            if let value = onsetByStep[step] {
-                sum += value
+            let onset = onsetByStep[step] ?? 0
+            let drum = drumByStep[step]?.strength ?? 0
+            let melody = melodyByStep[step]?.strength ?? 0
+
+            if onset > 0 || drum > 0 || melody > 0 {
+                total += max(onset, drum, melody)
                 count += 1
             }
         }
 
-        return count == 0 ? 0 : sum / Double(count)
+        return count == 0 ? 0 : total / Double(count)
+    }
+
+    private static func isSnare(_ note: UInt8) -> Bool {
+        note == 38 || note == 40
+    }
+
+    private static func isCrash(_ note: UInt8) -> Bool {
+        [49, 51, 52, 55, 57, 59].contains(note)
+    }
+
+    private static func isTom(_ note: UInt8) -> Bool {
+        [41, 43, 45, 47, 48, 50].contains(note)
     }
 
     private static func normalize(_ values: [Double]) -> [Double] {
-        guard let maxValue = values.max(), maxValue > 0 else {
+        guard let maxValue = values.max(),
+              maxValue > 0 else {
             return values.map { _ in 0 }
         }
-        return values.map { min(1, max(0, $0 / maxValue)) }
-    }
 
-    private static func opposite(_ lane: Int) -> Int {
-        wrapped(lane + 4)
+        return values.map {
+            min(1, max(0, $0 / maxValue))
+        }
     }
 
     private static func wrapped(_ lane: Int) -> Int {
@@ -469,7 +834,9 @@ enum ChartGenerator {
     private static func escape(_ value: String) -> String {
         var allowed = CharacterSet.urlQueryAllowed
         allowed.remove(charactersIn: "&=+%\\")
-        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+        return value.addingPercentEncoding(
+            withAllowedCharacters: allowed
+        ) ?? value
     }
 }
 
@@ -488,33 +855,67 @@ private struct SplitMix64 {
         return z ^ (z >> 31)
     }
 
-    mutating func double(in range: ClosedRange<Double>) -> Double {
-        let unit = Double(next() >> 11) / Double(1 << 53)
-        return range.lowerBound + unit * (range.upperBound - range.lowerBound)
+    mutating func double(
+        in range: ClosedRange<Double>
+    ) -> Double {
+        let unit =
+            Double(next() >> 11) /
+            Double(1 << 53)
+
+        return range.lowerBound +
+            unit *
+            (range.upperBound - range.lowerBound)
     }
 
-    mutating func int(in range: ClosedRange<Int>) -> Int {
-        guard range.lowerBound < range.upperBound else { return range.lowerBound }
-        let span = UInt64(range.upperBound - range.lowerBound + 1)
-        return range.lowerBound + Int(next() % span)
+    mutating func int(
+        in range: ClosedRange<Int>
+    ) -> Int {
+        guard range.lowerBound < range.upperBound else {
+            return range.lowerBound
+        }
+
+        let span =
+            UInt64(range.upperBound - range.lowerBound + 1)
+
+        return range.lowerBound +
+            Int(next() % span)
     }
 
-    mutating func int(in range: Range<Int>) -> Int {
-        guard range.lowerBound < range.upperBound else { return range.lowerBound }
-        let span = UInt64(range.upperBound - range.lowerBound)
-        return range.lowerBound + Int(next() % span)
+    mutating func int(
+        in range: Range<Int>
+    ) -> Int {
+        guard range.lowerBound < range.upperBound else {
+            return range.lowerBound
+        }
+
+        let span =
+            UInt64(range.upperBound - range.lowerBound)
+
+        return range.lowerBound +
+            Int(next() % span)
     }
 
-    mutating func chance(_ probability: Double) -> Bool {
-        double(in: 0...1) < min(1, max(0, probability))
+    mutating func chance(
+        _ probability: Double
+    ) -> Bool {
+        double(in: 0...1) <
+            min(1, max(0, probability))
     }
 }
 
 private extension Array {
-    mutating func rotateLeft(by amount: Int) {
+    mutating func rotateLeft(
+        by amount: Int
+    ) {
         guard !isEmpty else { return }
-        let shift = ((amount % count) + count) % count
+
+        let shift =
+            ((amount % count) + count) % count
+
         guard shift != 0 else { return }
-        self = Array(self[shift...]) + Array(self[..<shift])
+
+        self =
+            Array(self[shift...]) +
+            Array(self[..<shift])
     }
 }
