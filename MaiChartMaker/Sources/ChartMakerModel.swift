@@ -7,7 +7,7 @@ final class ChartMakerModel: ObservableObject {
     @Published var youtubeURL = ""
     @Published var title = ""
     @Published var artist = ""
-    @Published var status = "Import an MP3/M4A/WAV or paste a YouTube link."
+    @Published var status = "Import audio, MIDI/MusicXML, or paste a YouTube link."
     @Published var isWorking = false
     @Published var analysis: AudioAnalysis?
     @Published var charts: [GeneratedChart] = []
@@ -18,6 +18,21 @@ final class ChartMakerModel: ObservableObject {
     @Published var preparedSongFolder: URL?
     @Published var errorMessage: String?
 
+    @Published var scoreMIDIURL: URL?
+    @Published var scoreSourceURL: URL?
+    @Published var soundFontURL: URL?
+    @Published var soundFontName = ""
+    @Published var selectedProgram = 0
+
+    var hasExactScoreTiming: Bool {
+        analysis?.exactScoreTiming == true
+    }
+
+    var selectedInstrumentName: String {
+        GMInstrument.popular.first(where: { $0.program == selectedProgram })?.name
+            ?? "Program \(selectedProgram + 1)"
+    }
+
     func importFile(_ url: URL) {
         Task {
             await perform {
@@ -26,10 +41,67 @@ final class ChartMakerModel: ObservableObject {
                 self.audioURL = imported.exportURL
                 self.analysisAudioURL = imported.analysisURL
                 self.originalAudioURL = imported.originalURL
+                self.scoreMIDIURL = nil
+                self.scoreSourceURL = nil
                 if self.title.isEmpty {
                     self.title = url.deletingPathExtension().lastPathComponent
                 }
                 try await self.analyzeAndGenerate()
+            }
+        }
+    }
+
+    func importScoreFile(_ url: URL) {
+        Task {
+            await perform {
+                self.status = "Reading exact score timing…"
+                let result = try ScorePipeline.importScore(url)
+                self.analysis = result.analysis
+                self.scoreMIDIURL = result.midiURL
+                self.scoreSourceURL = result.sourceURL
+                self.audioURL = nil
+                self.analysisAudioURL = nil
+                self.originalAudioURL = nil
+                self.exportZipURL = nil
+                self.preparedSongFolder = nil
+
+                if self.title.isEmpty || self.source == .score {
+                    self.title = result.suggestedTitle
+                }
+
+                self.charts = ChartGenerator.generateAll(analysis: result.analysis)
+
+                if self.soundFontURL != nil {
+                    self.status = "Exact score loaded • rendering \(self.selectedInstrumentName)…"
+                    try await self.renderScoreWithCurrentSoundFont()
+                } else {
+                    self.status = "Exact MIDI/MusicXML timing loaded • \(self.charts.count) charts ready. Load an SF2/DLS bank to render track audio."
+                }
+            }
+        }
+    }
+
+    func importSoundFont(_ url: URL) {
+        Task {
+            await perform {
+                self.status = "Loading soundfont…"
+                let copied = try SoundFontRenderer.copyBank(url)
+                self.soundFontURL = copied
+                self.soundFontName = url.lastPathComponent
+
+                if self.scoreMIDIURL != nil {
+                    try await self.renderScoreWithCurrentSoundFont()
+                } else {
+                    self.status = "Soundfont loaded. Import MIDI or MusicXML to render it."
+                }
+            }
+        }
+    }
+
+    func renderScoreAudio() {
+        Task {
+            await perform {
+                try await self.renderScoreWithCurrentSoundFont()
             }
         }
     }
@@ -42,6 +114,8 @@ final class ChartMakerModel: ObservableObject {
                 self.audioURL = result.exportURL
                 self.analysisAudioURL = result.analysisURL
                 self.originalAudioURL = result.originalURL
+                self.scoreMIDIURL = nil
+                self.scoreSourceURL = nil
                 self.title = result.title
                 self.artist = result.artist
                 try await self.analyzeAndGenerate()
@@ -52,8 +126,10 @@ final class ChartMakerModel: ObservableObject {
     func regenerate() {
         guard let analysis else { return }
         charts = ChartGenerator.generateAll(analysis: analysis)
-        status = "Generated \(charts.count) difficulties."
-        prepareExport()
+        status = analysis.exactScoreTiming
+            ? "Remixed \(charts.count) charts on the exact score grid."
+            : "Remixed \(charts.count) audio-derived charts."
+        if audioURL != nil { prepareExport() }
     }
 
     func updateChart(id: Int, text: String) {
@@ -67,7 +143,12 @@ final class ChartMakerModel: ObservableObject {
     }
 
     func prepareExport() {
-        guard let audioURL, let analysis, !charts.isEmpty else { return }
+        guard let analysis, !charts.isEmpty else { return }
+        guard let audioURL else {
+            errorMessage = "The chart timing is ready, but AstroDX also needs track audio. Load an SF2/DLS soundfont and render the score first."
+            return
+        }
+
         do {
             let folder = try ChartExporter.makeSongFolder(
                 title: title,
@@ -92,6 +173,39 @@ final class ChartMakerModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func renderScoreWithCurrentSoundFont() async throws {
+        guard let midiURL = scoreMIDIURL else {
+            throw NSError(
+                domain: "MaiChartMaker",
+                code: 41,
+                userInfo: [NSLocalizedDescriptionKey: "Import MIDI or MusicXML first."]
+            )
+        }
+        guard let soundFontURL else {
+            throw NSError(
+                domain: "MaiChartMaker",
+                code: 42,
+                userInfo: [NSLocalizedDescriptionKey: "Load an SF2 or DLS soundfont first."]
+            )
+        }
+
+        status = "Rendering \(selectedInstrumentName) from the score…"
+        let wav = try await SoundFontRenderer.render(
+            midiURL: midiURL,
+            bankURL: soundFontURL,
+            program: selectedProgram
+        )
+
+        status = "Creating AstroDX compatibility audio…"
+        let mp3 = try await AudioPipeline.transcodeToMP3(wav)
+
+        self.analysisAudioURL = wav
+        self.originalAudioURL = wav
+        self.audioURL = mp3
+        self.status = "Exact score timing • rendered \(selectedInstrumentName) • AstroDX audio ready."
+        prepareExport()
     }
 
     private func analyzeAndGenerate() async throws {
