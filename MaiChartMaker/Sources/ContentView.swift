@@ -8,7 +8,6 @@ struct ContentView: View {
     @State private var showDirectoryPicker = false
     @State private var showShare = false
     @State private var selectedDifficulty: ChartDifficulty = .master
-    @State private var previewOctave = 4
 
     var body: some View {
         NavigationStack {
@@ -274,63 +273,27 @@ struct ContentView: View {
                 .pickerStyle(.menu)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Label("PIANO TEST TILES", systemImage: "pianokeys")
-                            .font(.system(size: 10, weight: .black, design: .rounded))
-                            .foregroundStyle(ArcadePalette.purple)
-
-                        Spacer()
-
-                        HStack(spacing: 6) {
-                            Button {
-                                previewOctave = max(2, previewOctave - 1)
-                                model.stopPreviewNotes()
-                            } label: {
-                                Image(systemName: "minus")
-                                    .font(.caption.bold())
-                                    .frame(width: 28, height: 28)
-                            }
-                            .buttonStyle(.bordered)
-
-                            Text("C\(previewOctave)–B\(previewOctave)")
-                                .font(.system(.caption, design: .rounded, weight: .black))
-                                .frame(minWidth: 64)
-
-                            Button {
-                                previewOctave = min(7, previewOctave + 1)
-                                model.stopPreviewNotes()
-                            } label: {
-                                Image(systemName: "plus")
-                                    .font(.caption.bold())
-                                    .frame(width: 28, height: 28)
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
-
-                    PianoTilesView(
-                        octave: previewOctave,
-                        onNoteOn: { model.previewNoteOn($0) },
-                        onNoteOff: { model.previewNoteOff($0) }
-                    )
-
-                    HStack {
-                        Label(
-                            model.soundFontURL == nil
-                                ? "Testing built-in piano"
-                                : "Testing \(model.selectedInstrumentName)",
-                            systemImage: model.soundFontURL == nil ? "waveform" : "externaldrive.fill"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                        Spacer()
-
-                        Button("Stop") {
+                    MIDIPianoTilesGameView(
+                        notes: model.pianoGameNotes,
+                        onPlayNote: { midi, velocity in
+                            model.previewNoteOn(midi, velocity: velocity)
+                        },
+                        onStopNote: { midi in
+                            model.previewNoteOff(midi)
+                        },
+                        onStopAll: {
                             model.stopPreviewNotes()
                         }
-                        .font(.caption.bold())
-                    }
+                    )
+
+                    Label(
+                        model.soundFontURL == nil
+                            ? "Game uses built-in piano"
+                            : "Game uses \(model.selectedInstrumentName)",
+                        systemImage: model.soundFontURL == nil ? "waveform" : "externaldrive.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
                 .padding(12)
                 .background(
