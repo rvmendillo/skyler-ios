@@ -4,11 +4,15 @@ enum ChartGenerator {
     static func generateAll(analysis: AudioAnalysis) -> [GeneratedChart] {
         let generationSeed = UInt64.random(in: UInt64.min...UInt64.max)
         let blueprint = buildBlueprint(analysis: analysis, seed: generationSeed)
-        let remasterEvents = enrichRemaster(
+        let enrichedRemaster = enrichRemaster(
             blueprint.events,
             analysis: analysis,
             totalSteps: blueprint.totalSteps,
             seed: generationSeed ^ 0xA57D_3C91_F0E1_22B7
+        )
+        let remasterEvents = enforceRemasterPlayability(
+            enrichedRemaster,
+            analysis: analysis
         )
 
         // Strict family inheritance:
@@ -599,24 +603,37 @@ enum ChartGenerator {
                 )
             }
 
-            // Full-ring EACH burst at selected climaxes. simai supports
-            // multiple simultaneous notes separated by '/'.
+            // Opposite-pair ring burst: all eight lanes appear across four
+            // 16th steps, but only two notes are ever simultaneous. This keeps
+            // the spectacle of a full-circle boss pattern while remaining
+            // physically playable with two hands.
             let burstStep = runStart + 8
-            if burstStep < end, burstStep < totalSteps, phrase % 4 == 3 {
-                let old = byStep[burstStep]
-                byStep[burstStep] = FamilyEvent(
-                    step: burstStep,
-                    lane: old?.lane ?? firstLane,
-                    gesture: .ring([1, 2, 3, 4, 5, 6, 7, 8]),
-                    strength: max(old?.strength ?? 0, 0.92),
-                    drumStrength: max(old?.drumStrength ?? 0, 0.76),
-                    drumNote: old?.drumNote,
-                    melodyPitch: old?.melodyPitch,
-                    melodyStrength: max(old?.melodyStrength ?? 0, 0.76),
-                    melodicInterval: old?.melodicInterval ?? 0,
-                    importance: 0.24,
-                    phrase: phrase
-                )
+            if burstStep + 3 < end, burstStep + 3 < totalSteps, phrase % 4 == 3 {
+                let pairs = [
+                    [1, 5],
+                    [2, 6],
+                    [3, 7],
+                    [4, 8]
+                ]
+
+                for (offset, pair) in pairs.enumerated() {
+                    let step = burstStep + offset
+                    let old = byStep[step]
+
+                    byStep[step] = FamilyEvent(
+                        step: step,
+                        lane: pair[0],
+                        gesture: .ring(pair),
+                        strength: max(old?.strength ?? 0, 0.90),
+                        drumStrength: max(old?.drumStrength ?? 0, 0.72),
+                        drumNote: old?.drumNote,
+                        melodyPitch: old?.melodyPitch,
+                        melodyStrength: max(old?.melodyStrength ?? 0, 0.72),
+                        melodicInterval: old?.melodicInterval ?? 0,
+                        importance: 0.25,
+                        phrase: phrase
+                    )
+                }
             }
         }
 
@@ -652,6 +669,139 @@ enum ChartGenerator {
         }
 
         return byStep.values.sorted { $0.step < $1.step }
+    }
+
+    private static func enforceRemasterPlayability(
+        _ input: [FamilyEvent],
+        analysis: AudioAnalysis
+    ) -> [FamilyEvent] {
+        var events = input.sorted { $0.step < $1.step }
+
+        // At very high BPM, repeating the exact same sensor every 16th can
+        // become a one-hand jack rather than a musical pattern. Redirect only
+        // low-priority repeats by one lane; melody-heavy anchors stay intact.
+        if analysis.bpm > 220 {
+            var previousLane: Int?
+            var previousStep = -999
+
+            for index in events.indices {
+                guard
+                    events[index].step - previousStep == 1,
+                    events[index].lane == previousLane,
+                    events[index].melodyStrength < 0.70
+                else {
+                    previousLane = events[index].lane
+                    previousStep = events[index].step
+                    continue
+                }
+
+                let old = events[index]
+                events[index] = FamilyEvent(
+                    step: old.step,
+                    lane: wrapped(old.lane + (index.isMultiple(of: 2) ? 1 : -1)),
+                    gesture: old.gesture,
+                    strength: old.strength,
+                    drumStrength: old.drumStrength,
+                    drumNote: old.drumNote,
+                    melodyPitch: old.melodyPitch,
+                    melodyStrength: old.melodyStrength,
+                    melodicInterval: old.melodicInterval,
+                    importance: old.importance,
+                    phrase: old.phrase
+                )
+
+                previousLane = events[index].lane
+                previousStep = events[index].step
+            }
+        }
+
+        // Prevent back-to-back two-hand chords every 16th. A short pair burst
+        // is fine, but sustained double-jacking is not useful practice.
+        var lastTwoHandStep = -999
+
+        for index in events.indices {
+            let twoHand: Bool
+            switch events[index].gesture {
+            case .double:
+                twoHand = true
+            case .ring(let lanes):
+                twoHand = lanes.count >= 2
+            default:
+                twoHand = false
+            }
+
+            guard twoHand else { continue }
+
+            if events[index].step - lastTwoHandStep < 2 {
+                let old = events[index]
+                events[index] = FamilyEvent(
+                    step: old.step,
+                    lane: old.lane,
+                    gesture: .tap,
+                    strength: old.strength,
+                    drumStrength: old.drumStrength,
+                    drumNote: old.drumNote,
+                    melodyPitch: old.melodyPitch,
+                    melodyStrength: old.melodyStrength,
+                    melodicInterval: old.melodicInterval,
+                    importance: old.importance,
+                    phrase: old.phrase
+                )
+            } else {
+                lastTwoHandStep = events[index].step
+            }
+        }
+
+        // Cap sustained density while preserving strong melody/drum anchors.
+        // Boss sections may still briefly spike above this, but the whole chart
+        // stays in a human two-hand range rather than becoming an autoplay map.
+        let duration = max(1, analysis.duration)
+        let maxAverageHitsPerSecond = min(
+            10.5,
+            max(8.0, analysis.bpm / 24.0)
+        )
+
+        func hitCount(_ event: FamilyEvent) -> Int {
+            switch event.gesture {
+            case .double:
+                return 2
+            case .ring(let lanes):
+                return min(2, max(1, lanes.count))
+            default:
+                return 1
+            }
+        }
+
+        var totalHits = events.reduce(0) {
+            $0 + hitCount($1)
+        }
+        let allowedHits = Int(duration * maxAverageHitsPerSecond)
+
+        if totalHits > allowedHits {
+            let removable = events.indices
+                .filter {
+                    events[$0].melodyStrength < 0.52 &&
+                    events[$0].drumStrength < 0.58 &&
+                    events[$0].importance < 0.48
+                }
+                .sorted {
+                    events[$0].importance < events[$1].importance
+                }
+
+            var removed = Set<Int>()
+
+            for index in removable {
+                guard totalHits > allowedHits else { break }
+                removed.insert(index)
+                totalHits -= hitCount(events[index])
+            }
+
+            events = events.enumerated()
+                .filter { !removed.contains($0.offset) }
+                .map(\.element)
+        }
+
+        return events
     }
 
     private static func simplify(
