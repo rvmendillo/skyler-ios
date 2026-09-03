@@ -176,8 +176,13 @@ enum AudioPipeline {
         while bpm > 190 { bpm /= 2 }
 
         let beat = 60.0 / bpm
-        let firstWindow = onsets.filter { $0.time < min(duration, beat * 2.0) }
-        let firstBeat = firstWindow.max(by: { $0.strength < $1.strength })?.time ?? 0.0
+        let firstBeat = estimateBeatPhase(
+            flux: flux,
+            lag: max(1, bestLag),
+            envRate: envRate,
+            duration: duration,
+            fallbackOnsets: onsets
+        )
 
         let rawStrengths = onsets.map(\.strength)
         let maxStrength = rawStrengths.max() ?? 1
@@ -244,6 +249,64 @@ enum AudioPipeline {
             analysis: analysis,
             pianoGameNotes: transcription?.pianoGameNotes ?? []
         )
+    }
+
+    private static func estimateBeatPhase(
+        flux: [Double],
+        lag: Int,
+        envRate: Double,
+        duration: Double,
+        fallbackOnsets: [(time: Double, strength: Double)]
+    ) -> Double {
+        guard lag > 0, flux.count > lag else {
+            return fallbackOnsets.first?.time ?? 0
+        }
+
+        var bestPhase = 0
+        var bestScore = -Double.infinity
+
+        // Score every possible phase against the entire song, allowing a
+        // small neighborhood around each predicted beat. This is much more
+        // stable than picking one loud onset near the start of the file.
+        for phase in 0..<lag {
+            var score = 0.0
+            var index = phase
+            var beatIndex = 0
+
+            while index < flux.count {
+                var local = flux[index]
+                if index > 0 { local = max(local, flux[index - 1]) }
+                if index + 1 < flux.count { local = max(local, flux[index + 1]) }
+
+                // Downbeats get a little more weight without forcing 4/4.
+                let weight = beatIndex % 4 == 0 ? 1.18 : 1.0
+                score += local * weight
+
+                beatIndex += 1
+                index += lag
+            }
+
+            if score > bestScore {
+                bestScore = score
+                bestPhase = phase
+            }
+        }
+
+        let phaseTime = Double(bestPhase) / envRate
+        let beatSeconds = Double(lag) / envRate
+
+        // Prefer an actual detected onset close to the winning phase so the
+        // exported &first offset lands on a real transient rather than an
+        // interpolated envelope bin.
+        let nearby = fallbackOnsets.filter {
+            abs($0.time - phaseTime) <= min(0.10, beatSeconds * 0.22)
+        }
+
+        if let onset = nearby.max(by: { $0.strength < $1.strength }) {
+            return max(0, min(duration, onset.time))
+        }
+
+        return max(0, min(duration, phaseTime))
     }
 
     static func importYouTube(_ rawURL: String) async throws -> YouTubeMetadata {
