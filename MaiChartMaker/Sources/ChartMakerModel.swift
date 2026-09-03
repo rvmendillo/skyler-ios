@@ -78,9 +78,7 @@ final class ChartMakerModel: ObservableObject {
 
                 self.charts = ChartGenerator.generateAll(analysis: result.analysis)
 
-                let soundName = self.soundFontURL == nil
-                    ? "built-in piano"
-                    : self.selectedInstrumentName
+                let soundName = self.selectedInstrumentName
                 self.status = "Exact score loaded • \(self.pianoGameNotes.count) Piano Tiles notes • testing \(soundName). Render MP3 when ready."
             }
         }
@@ -126,6 +124,13 @@ final class ChartMakerModel: ObservableObject {
 
     func stopPreviewNotes() {
         pianoPreviewEngine.stopAll()
+    }
+
+    func instrumentSelectionChanged() {
+        pianoPreviewEngine.instrumentChanged()
+        if scoreMIDIURL != nil {
+            status = "Piano Tiles + render instrument: \(selectedInstrumentName)."
+        }
     }
 
     func renderScoreAudio() {
@@ -219,11 +224,19 @@ final class ChartMakerModel: ObservableObject {
             )
         }
 
-        status = "Rendering lossless WAV reference…"
-        let wav = try DefaultMIDIRenderer.renderPianoWAV(midiURL: midiURL)
+        let program = selectedProgram
+        let instrumentName = selectedInstrumentName
 
-        status = "Encoding WAV with FFmpeg/libmp3lame at 320 kbps…"
-        let mp3 = try FFmpegAudioConverter.wavToHighQualityMP3(wav)
+        status = "Rendering \(instrumentName) to lossless WAV…"
+        let wav = try await Task.detached(priority: .userInitiated) {
+            try DefaultMIDIRenderer.renderBuiltInWAV(
+                midiURL: midiURL,
+                program: program
+            )
+        }.value
+
+        status = "Encoding native 320 kbps MP3…"
+        let mp3 = try await AudioPipeline.transcodeToMP3(wav)
 
         status = "Comparing WAV and decoded MP3 waveforms…"
         let comparison = try? await WaveformQualityChecker.compare(
@@ -236,8 +249,8 @@ final class ChartMakerModel: ObservableObject {
         self.audioURL = mp3
         self.waveformComparison = comparison
         self.status = comparison.map {
-            "Exact score • FFmpeg MP3 ready • \($0.summary)"
-        } ?? "Exact score timing • FFmpeg 320 kbps MP3 ready."
+            "Exact score • \(instrumentName) • native MP3 ready • \($0.summary)"
+        } ?? "Exact score • \(instrumentName) • native 320 kbps MP3 ready."
         prepareExport()
     }
 
@@ -257,15 +270,18 @@ final class ChartMakerModel: ObservableObject {
             )
         }
 
-        status = "Rendering \(selectedInstrumentName) to lossless WAV…"
+        let program = selectedProgram
+        let instrumentName = selectedInstrumentName
+
+        status = "Rendering \(instrumentName) to lossless WAV…"
         let wav = try await SoundFontRenderer.renderWAV(
             midiURL: midiURL,
             bankURL: soundFontURL,
-            program: selectedProgram
+            program: program
         )
 
-        status = "Encoding WAV with FFmpeg/libmp3lame at 320 kbps…"
-        let mp3 = try FFmpegAudioConverter.wavToHighQualityMP3(wav)
+        status = "Encoding native 320 kbps MP3…"
+        let mp3 = try await AudioPipeline.transcodeToMP3(wav)
 
         status = "Comparing WAV and decoded MP3 waveforms…"
         let comparison = try? await WaveformQualityChecker.compare(
@@ -278,8 +294,8 @@ final class ChartMakerModel: ObservableObject {
         self.audioURL = mp3
         self.waveformComparison = comparison
         self.status = comparison.map {
-            "Exact score • \(self.selectedInstrumentName) • \($0.summary)"
-        } ?? "Exact score timing • rendered \(selectedInstrumentName) • FFmpeg MP3 ready."
+            "Exact score • \(instrumentName) • native MP3 ready • \($0.summary)"
+        } ?? "Exact score • \(instrumentName) • native 320 kbps MP3 ready."
         prepareExport()
     }
 
