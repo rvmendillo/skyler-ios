@@ -147,13 +147,14 @@ enum MIDIPianoGameLoader {
                 index += 1
             }
 
+            let playable = representativePair(from: group)
             var used = Set<Int>()
 
-            for (position, item) in group.enumerated() {
+            for item in playable {
                 let preferred = Int(item.midiNote) % 4
                 var lane = preferred
 
-                if used.contains(lane), used.count < 4 {
+                if used.contains(lane) {
                     for offset in 1...3 {
                         let candidate = (preferred + offset) % 4
                         if !used.contains(candidate) {
@@ -161,10 +162,6 @@ enum MIDIPianoGameLoader {
                             break
                         }
                     }
-                }
-
-                if group.count > 4, position >= 4 {
-                    lane = position % 4
                 }
 
                 used.insert(lane)
@@ -182,5 +179,36 @@ enum MIDIPianoGameLoader {
         }
 
         return output.sorted { $0.time < $1.time }
+    }
+
+    private static func representativePair(from group: [RawNote]) -> [RawNote] {
+        guard group.count > 2 else {
+            return group.sorted { $0.midiNote < $1.midiNote }
+        }
+
+        let strongest = group.max {
+            if $0.velocity == $1.velocity {
+                return $0.midiNote < $1.midiNote
+            }
+            return $0.velocity < $1.velocity
+        }!
+
+        let remaining = group.filter {
+            !($0.midiNote == strongest.midiNote &&
+              abs($0.time - strongest.time) < 0.0001 &&
+              $0.velocity == strongest.velocity)
+        }
+
+        let partner = remaining.max { lhs, rhs in
+            let lhsDistance = abs(Int(lhs.midiNote) - Int(strongest.midiNote))
+            let rhsDistance = abs(Int(rhs.midiNote) - Int(strongest.midiNote))
+            let lhsScore = lhsDistance * 3 + Int(lhs.velocity)
+            let rhsScore = rhsDistance * 3 + Int(rhs.velocity)
+            return lhsScore < rhsScore
+        }
+
+        var pair = [strongest]
+        if let partner { pair.append(partner) }
+        return pair.sorted { $0.midiNote < $1.midiNote }
     }
 }
