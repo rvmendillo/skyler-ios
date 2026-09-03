@@ -10,6 +10,9 @@ packages:
   ZIPFoundation:
     url: https://github.com/weichsel/ZIPFoundation.git
     from: 0.9.19
+  FFmpegKit:
+    url: https://github.com/jaywcjlove/ffmpeg-kit.git
+    revision: 0243a6a262944e2e6cd1dd9603122108594d182a
 targets:
   MaiChartMaker:
     type: application
@@ -19,6 +22,8 @@ targets:
     dependencies:
       - package: SwiftMP3
       - package: ZIPFoundation
+      - package: FFmpegKit
+        product: ffmpegkit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rvmendillo.maichartmaker
