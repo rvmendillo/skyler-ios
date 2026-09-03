@@ -7,6 +7,8 @@ private enum MaimaiPreviewKind {
     case breakTap
     case hold
     case slide(destination: Int)
+    case touch
+    case touchHold
 }
 
 private struct MaimaiPreviewEvent: Identifiable {
@@ -100,6 +102,16 @@ private enum SimaiPreviewParser {
         from token: String,
         time: Double
     ) -> MaimaiPreviewEvent? {
+        let cleaned = token.trimmingCharacters(in: .whitespaces)
+
+        if cleaned.hasPrefix("C") {
+            return MaimaiPreviewEvent(
+                time: time,
+                lanes: [],
+                kind: cleaned.contains("h[") ? .touchHold : .touch
+            )
+        }
+
         if token.contains("/") {
             let lanes = token
                 .split(separator: "/")
@@ -109,7 +121,7 @@ private enum SimaiPreviewParser {
 
             return MaimaiPreviewEvent(
                 time: time,
-                lanes: Array(lanes.prefix(2)),
+                lanes: lanes,
                 kind: .tap
             )
         }
@@ -177,6 +189,7 @@ struct MaimaiPlaytestView: View {
     @State private var lastTick = Date()
     @State private var player: AVAudioPlayer?
     @State private var noteSpeed = 1.25
+    @State private var trackVolume = 1.0
 
     private let timer = Timer.publish(
         every: 1.0 / 60.0,
@@ -335,18 +348,23 @@ struct MaimaiPlaytestView: View {
                             )
                         }
 
-                        ForEach(
-                            Array(event.lanes.enumerated()),
-                            id: \.offset
-                        ) { _, lane in
-                            let point = lanePoint(
-                                lane: lane,
-                                radius: radius,
-                                center: center
-                            )
+                        if event.lanes.isEmpty {
+                            centerPreviewNote(event.kind, progress: progress)
+                                .position(center)
+                        } else {
+                            ForEach(
+                                Array(event.lanes.enumerated()),
+                                id: \.offset
+                            ) { _, lane in
+                                let point = lanePoint(
+                                    lane: lane,
+                                    radius: radius,
+                                    center: center
+                                )
 
-                            previewNote(event.kind)
-                                .position(point)
+                                previewNote(event.kind)
+                                    .position(point)
+                            }
                         }
                     }
 
@@ -416,6 +434,29 @@ struct MaimaiPlaytestView: View {
                     )
                 }
                 .buttonStyle(.bordered)
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: audioURL == nil ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .foregroundStyle(audioURL == nil ? .secondary : ArcadePalette.aqua)
+
+                Text(audioURL == nil ? "TRACK AUDIO NOT RENDERED" : "TRACK AUDIO")
+                    .font(.system(size: 9, weight: .black, design: .rounded))
+                    .foregroundStyle(.secondary)
+
+                Slider(
+                    value: $trackVolume,
+                    in: 0...1,
+                    step: 0.05
+                )
+                .disabled(audioURL == nil)
+                .onChange(of: trackVolume) { value in
+                    player?.volume = Float(value)
+                }
+
+                Text("\(Int(trackVolume * 100))%")
+                    .font(.caption2.bold())
+                    .frame(width: 34)
             }
 
             HStack {
@@ -542,6 +583,69 @@ struct MaimaiPlaytestView: View {
                     .foregroundStyle(.white)
             }
             .frame(width: 31, height: 31)
+
+        case .touch, .touchHold:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func centerPreviewNote(
+        _ kind: MaimaiPreviewKind,
+        progress: Double
+    ) -> some View {
+        switch kind {
+        case .touchHold:
+            ZStack {
+                Circle()
+                    .stroke(
+                        ArcadePalette.aqua.opacity(0.28),
+                        lineWidth: 12
+                    )
+                    .frame(width: 92, height: 92)
+
+                Circle()
+                    .trim(from: 0, to: max(0.08, progress))
+                    .stroke(
+                        ArcadePalette.pink,
+                        style: StrokeStyle(
+                            lineWidth: 7,
+                            lineCap: .round
+                        )
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: 78, height: 78)
+
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                ArcadePalette.aqua,
+                                ArcadePalette.purple
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 58, height: 58)
+                    .rotationEffect(.degrees(45))
+
+                Text("HOLD")
+                    .font(.system(size: 9, weight: .black, design: .rounded))
+                    .foregroundStyle(.white)
+            }
+
+        case .touch:
+            ZStack {
+                Circle()
+                    .fill(ArcadePalette.aqua.opacity(0.92))
+                    .frame(width: 58, height: 58)
+                Image(systemName: "hand.tap.fill")
+                    .foregroundStyle(.white)
+            }
+
+        default:
+            EmptyView()
         }
     }
 
@@ -563,6 +667,15 @@ struct MaimaiPlaytestView: View {
 
     private func play() {
         if let audioURL {
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playback, mode: .default)
+                try session.setActive(true)
+            } catch {
+                // AVAudioPlayer can still attempt playback; the visual
+                // playtest remains usable if the session cannot be changed.
+            }
+
             if player == nil {
                 player = try? AVAudioPlayer(
                     contentsOf: audioURL
@@ -570,6 +683,7 @@ struct MaimaiPlaytestView: View {
                 player?.prepareToPlay()
             }
 
+            player?.volume = Float(trackVolume)
             player?.currentTime = elapsed
             player?.play()
         }
