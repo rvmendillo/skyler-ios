@@ -229,9 +229,9 @@ struct ContentView: View {
                         Image(systemName: "pianokeys")
                             .foregroundStyle(ArcadePalette.aqua)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Built-in Piano")
+                            Text(model.selectedInstrumentName)
                                 .font(.system(.subheadline, design: .rounded, weight: .bold))
-                            Text("Default renderer • no SoundFont required")
+                            Text("Built-in renderer • no SoundFont required")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -271,6 +271,9 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .onChange(of: model.selectedProgram) { _ in
+                    model.instrumentSelectionChanged()
+                }
 
                 VStack(alignment: .leading, spacing: 10) {
                     MIDIPianoTilesGameView(
@@ -287,9 +290,7 @@ struct ContentView: View {
                     )
 
                     Label(
-                        model.soundFontURL == nil
-                            ? "Game uses built-in piano"
-                            : "Game uses \(model.selectedInstrumentName)",
+                        "Game uses \(model.selectedInstrumentName)",
                         systemImage: model.soundFontURL == nil ? "waveform" : "externaldrive.fill"
                     )
                     .font(.caption)
@@ -316,7 +317,7 @@ struct ContentView: View {
                     model.renderScoreAudio()
                 } label: {
                     Label(
-                        model.soundFontURL == nil ? "Render Built-in Piano MP3" : "Render \(model.selectedInstrumentName)",
+                        "Render \(model.selectedInstrumentName) MP3",
                         systemImage: "waveform.badge.plus"
                     )
                 }
@@ -344,7 +345,7 @@ struct ContentView: View {
                     )
                 }
 
-                Text("MIDI/MusicXML are rendered first to a lossless 48 kHz WAV reference, then FFmpeg/libmp3lame makes the 320 kbps AstroDX MP3. The app compares the decoded MP3 waveform against the WAV so you can see the actual encode difference. Load any legally obtained SF2/DLS bank to replace the built-in piano.")
+                Text("MIDI/MusicXML render first to a lossless 48 kHz WAV reference, then the native encoder creates a 320 kbps AstroDX MP3. Piano Tiles and Render use the same selected instrument. Load any legally obtained SF2/DLS bank to replace the built-in synth.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -389,7 +390,7 @@ struct ContentView: View {
                             Text(selectedDifficulty.name)
                                 .font(.system(.headline, design: .rounded, weight: .black))
                                 .foregroundStyle(ArcadePalette.difficulty(selectedDifficulty))
-                            Text(model.hasExactScoreTiming ? "Exact MIDI/MusicXML beat grid + musical phrases" : "Generated from musical phrases + beat accents")
+                            Text(model.hasExactScoreTiming ? "Hierarchical chart family • drum rhythm + melody motion" : "Generated from musical phrases + beat accents")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
