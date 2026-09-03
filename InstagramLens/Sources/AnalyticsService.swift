@@ -246,12 +246,12 @@ final class AnalyticsService: ObservableObject {
     }
 
     private func saveSnapshot() {
-        let metricMap = Dictionary(
-            uniqueKeysWithValues: probes.compactMap { item in
-                guard item.supported, let value = item.value else { return nil }
-                return ("\(item.scope).\(item.metric)", value)
+        var metricMap: [String: Double] = [:]
+        for item in probes {
+            if item.supported, let value = item.value {
+                metricMap["\(item.scope).\(item.metric)"] = value
             }
-        )
+        }
 
         snapshots.insert(
             AccountSnapshot(
