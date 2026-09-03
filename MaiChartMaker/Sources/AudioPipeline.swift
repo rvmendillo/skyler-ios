@@ -25,14 +25,22 @@ enum AudioPipelineError: LocalizedError {
     }
 }
 
+struct ImportedAudio: Sendable {
+    let analysisURL: URL
+    let exportURL: URL
+    let originalURL: URL
+}
+
 struct YouTubeMetadata: Sendable {
     let title: String
     let artist: String
-    let downloadedURL: URL
+    let analysisURL: URL
+    let exportURL: URL
+    let originalURL: URL
 }
 
 enum AudioPipeline {
-    static func importLocal(_ source: URL) async throws -> URL {
+    static func importLocal(_ source: URL) async throws -> ImportedAudio {
         let access = source.startAccessingSecurityScopedResource()
         defer { if access { source.stopAccessingSecurityScopedResource() } }
 
@@ -50,9 +58,12 @@ enum AudioPipeline {
         try FileManager.default.copyItem(at: source, to: temp)
 
         if source.pathExtension.lowercased() == "mp3" {
-            return temp
+            return ImportedAudio(analysisURL: temp, exportURL: temp, originalURL: temp)
         }
-        return try await transcodeToMP3(temp)
+
+        // Analyze the untouched source. Only the compatibility copy is encoded.
+        let compatible = try await transcodeToMP3(temp)
+        return ImportedAudio(analysisURL: temp, exportURL: compatible, originalURL: temp)
     }
 
     static func transcodeToMP3(_ source: URL) async throws -> URL {
@@ -61,9 +72,12 @@ enum AudioPipeline {
         guard let track = tracks.first else { throw AudioPipelineError.noAudioTrack }
 
         let reader = try AVAssetReader(asset: asset)
+        let sourceRate = (try? AVAudioFile(forReading: source).processingFormat.sampleRate) ?? 44_100
+        let supportedRates = [32_000.0, 44_100.0, 48_000.0]
+        let outputRate = supportedRates.min(by: { abs($0 - sourceRate) < abs($1 - sourceRate) }) ?? 44_100
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: 44_100,
+            AVSampleRateKey: outputRate,
             AVNumberOfChannelsKey: 2,
             AVLinearPCMBitDepthKey: 32,
             AVLinearPCMIsFloatKey: true,
@@ -77,11 +91,11 @@ enum AudioPipeline {
         guard reader.startReading() else { throw reader.error ?? AudioPipelineError.cannotReadPCM }
 
         let encoder = MP3Encoder(options: MP3EncoderOptions(
-            sampleRate: 44_100,
-            bitrateKbps: 192,
+            sampleRate: Int(outputRate),
+            bitrateKbps: 320,
             vbr: false,
             mode: .stereo,
-            quality: 4
+            quality: 0
         ))
         var session = encoder.newSession()
         var encoded = Data()
@@ -297,7 +311,9 @@ enum AudioPipeline {
                 return YouTubeMetadata(
                     title: info.title ?? "YouTube \(videoID)",
                     artist: info.author ?? "YouTube",
-                    downloadedURL: mp3
+                    analysisURL: downloaded,
+                    exportURL: mp3,
+                    originalURL: downloaded
                 )
             } catch {
                 lastError = error
@@ -351,7 +367,9 @@ enum AudioPipeline {
                 return YouTubeMetadata(
                     title: info.title ?? "YouTube \(videoID)",
                     artist: info.uploader ?? "YouTube",
-                    downloadedURL: mp3
+                    analysisURL: downloaded,
+                    exportURL: mp3,
+                    originalURL: downloaded
                 )
             } catch {
                 lastError = error
