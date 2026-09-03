@@ -43,11 +43,14 @@ jobs:
             -o Resources/GeneralUser-GS-LICENSE.txt
 
           rm -rf /tmp/basic-pitch
-          git clone --depth 1 --filter=blob:none --sparse \
+          git clone --depth 1 --filter=blob:none --no-checkout \
             https://github.com/spotify/basic-pitch.git /tmp/basic-pitch
-          git -C /tmp/basic-pitch sparse-checkout set \
-            basic_pitch/saved_models/icassp_2022/nmp.mlpackage \
-            LICENSE
+          git -C /tmp/basic-pitch sparse-checkout init --no-cone
+          printf '%s\n' \
+            '/basic_pitch/saved_models/icassp_2022/nmp.mlpackage/' \
+            '/LICENSE' \
+            > /tmp/basic-pitch/.git/info/sparse-checkout
+          git -C /tmp/basic-pitch checkout
           cp -R \
             /tmp/basic-pitch/basic_pitch/saved_models/icassp_2022/nmp.mlpackage \
             Resources/BasicPitch_nmp.mlpackage
