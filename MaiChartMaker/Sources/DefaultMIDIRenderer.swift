@@ -14,7 +14,7 @@ enum DefaultMIDIRendererError: LocalizedError {
         case .noNotes:
             return "The score contains no playable MIDI notes."
         case .cannotCreateBuffer:
-            return "Could not create the default instrument audio buffer."
+            return "Could not create the built-in instrument audio buffer."
         }
     }
 }
@@ -26,17 +26,22 @@ private struct RenderNote {
     let velocity: Double
     let pan: Double
 
-    var end: Double { start + duration + 1.8 }
+    func end(program: Int) -> Double {
+        start + duration + BuiltInInstrumentSynth.tailDuration(program: program)
+    }
 }
 
 enum DefaultMIDIRenderer {
-    static func renderPianoWAV(midiURL: URL) throws -> URL {
+    static func renderBuiltInWAV(
+        midiURL: URL,
+        program: Int
+    ) throws -> URL {
         let notes = try readNotes(midiURL)
         guard !notes.isEmpty else { throw DefaultMIDIRendererError.noNotes }
 
         let sampleRate = 48_000.0
         let blockFrames = 2048
-        let totalDuration = (notes.map(\.end).max() ?? 0) + 0.35
+        let totalDuration = (notes.map { $0.end(program: program) }.max() ?? 0) + 0.25
         let totalFrames = Int64(ceil(totalDuration * sampleRate))
 
         guard let format = AVAudioFormat(
@@ -49,7 +54,7 @@ enum DefaultMIDIRenderer {
         }
 
         let out = FileManager.default.temporaryDirectory
-            .appendingPathComponent("default-piano-\(UUID().uuidString).wav")
+            .appendingPathComponent("built-in-\(program)-\(UUID().uuidString).wav")
         let file = try AVAudioFile(forWriting: out, settings: format.settings)
 
         guard let buffer = AVAudioPCMBuffer(
@@ -73,7 +78,7 @@ enum DefaultMIDIRenderer {
                 active.append(sorted[nextIndex])
                 nextIndex += 1
             }
-            active.removeAll { $0.end < blockStart }
+            active.removeAll { $0.end(program: program) < blockStart }
 
             buffer.frameLength = AVAudioFrameCount(framesThisBlock)
             guard let channels = buffer.floatChannelData else {
@@ -95,7 +100,7 @@ enum DefaultMIDIRenderer {
                 )
                 let lastSample = min(
                     framesThisBlock,
-                    Int(ceil((note.end - blockStart) * sampleRate))
+                    Int(ceil((note.end(program: program) - blockStart) * sampleRate))
                 )
                 guard firstSample < lastSample else { continue }
 
@@ -107,24 +112,13 @@ enum DefaultMIDIRenderer {
                     let t = absoluteTime - note.start
                     guard t >= 0 else { continue }
 
-                    let envelope = pianoEnvelope(time: t, noteDuration: note.duration)
-                    guard envelope > 0.00001 else { continue }
-
-                    let phase = 2.0 * Double.pi * note.frequency * t
-                    let hammer = exp(-t * 30.0)
-
-                    var sample =
-                        sin(phase) * 1.00 +
-                        sin(phase * 2.0) * 0.42 +
-                        sin(phase * 3.0) * 0.18 +
-                        sin(phase * 4.0) * 0.08 +
-                        sin(phase * 5.0) * 0.035
-
-                    sample += sin(phase * 7.03) * 0.10 * hammer
-                    sample += sin(phase * 11.11) * 0.045 * hammer
-
-                    let gain = 0.105 * pow(note.velocity, 1.25) * envelope
-                    let value = sample * gain
+                    let value = BuiltInInstrumentSynth.sample(
+                        frequency: note.frequency,
+                        time: t,
+                        noteDuration: note.duration,
+                        velocity: note.velocity,
+                        program: program
+                    )
 
                     left[i] += Float(value * leftGain)
                     right[i] += Float(value * rightGain)
@@ -132,8 +126,8 @@ enum DefaultMIDIRenderer {
             }
 
             for i in 0..<framesThisBlock {
-                left[i] = Float(tanh(Double(left[i]) * 1.15) * 0.88)
-                right[i] = Float(tanh(Double(right[i]) * 1.15) * 0.88)
+                left[i] = Float(tanh(Double(left[i]) * 1.08) * 0.9)
+                right[i] = Float(tanh(Double(right[i]) * 1.08) * 0.9)
             }
 
             try file.write(from: buffer)
@@ -143,23 +137,8 @@ enum DefaultMIDIRenderer {
         return out
     }
 
-    private static func pianoEnvelope(time: Double, noteDuration: Double) -> Double {
-        let attack = 0.006
-        let decay = 1.45
-        let sustain = 0.19
-        let release = 0.82
-
-        if time < attack {
-            return time / attack
-        }
-
-        let held = sustain + (1.0 - sustain) * exp(-(time - attack) / decay)
-        if time <= noteDuration {
-            return held
-        }
-
-        let atRelease = sustain + (1.0 - sustain) * exp(-(max(0, noteDuration - attack)) / decay)
-        return atRelease * exp(-(time - noteDuration) / release)
+    static func renderPianoWAV(midiURL: URL) throws -> URL {
+        try renderBuiltInWAV(midiURL: midiURL, program: 0)
     }
 
     private static func readNotes(_ url: URL) throws -> [RenderNote] {
