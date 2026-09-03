@@ -79,6 +79,27 @@ jobs:
           echo "Embedded runtime-only FFmpeg frameworks:"
           find "$APP/Frameworks" -maxdepth 1 -name "*.framework" -print
 
+          echo "Copying Swift compatibility runtime required by embedded frameworks..."
+          xcrun swift-stdlib-tool \
+            --copy \
+            --verbose \
+            --scan-executable "$APP/MaiChartMaker" \
+            --scan-folder "$APP/Frameworks" \
+            --platform iphoneos \
+            --destination "$APP/Frameworks" \
+            --strip-bitcode
+
+          echo "Embedded Swift runtime dylibs:"
+          find "$APP/Frameworks" -maxdepth 1 -name "libswift*.dylib" -print | sort
+
+          if [ ! -f "$APP/Frameworks/libswiftCoreMedia.dylib" ]; then
+            echo "ERROR: libswiftCoreMedia.dylib was not copied; Feather would fail to load FFmpeg."
+            exit 1
+          fi
+
+          echo "libavutil dependencies after runtime copy:"
+          otool -L "$APP/Frameworks/libavutil.framework/libavutil"
+
       - name: Package IPA
         working-directory: MaiChartMaker
         run: |
