@@ -1,0 +1,69 @@
+name: Build MaiChart Maker IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - astrodx-maichart-maker
+    paths:
+      - "MaiChartMaker/**"
+      - ".github/workflows/maichart-maker-ipa.yml"
+
+jobs:
+  build:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: MaiChartMaker
+        run: xcodegen generate
+
+      - name: Resolve Swift packages
+        working-directory: MaiChartMaker
+        run: xcodebuild -resolvePackageDependencies -project MaiChartMaker.xcodeproj -scheme MaiChartMaker
+
+      - name: Build unsigned device app
+        working-directory: MaiChartMaker
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project MaiChartMaker.xcodeproj \
+            -scheme MaiChartMaker \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | tee xcodebuild.log
+
+      - name: Package IPA
+        working-directory: MaiChartMaker
+        run: |
+          rm -rf Payload
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/MaiChartMaker.app Payload/
+          /usr/bin/zip -qry MaiChartMaker-unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: MaiChartMaker-unsigned-ipa
+          path: MaiChartMaker/MaiChartMaker-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maichart-build-log
+          path: MaiChartMaker/xcodebuild.log
+          if-no-files-found: ignore
