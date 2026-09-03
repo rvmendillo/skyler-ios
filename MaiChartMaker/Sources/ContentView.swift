@@ -3,6 +3,8 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var model: ChartMakerModel
     @State private var showAudioPicker = false
+    @State private var showScorePicker = false
+    @State private var showSoundFontPicker = false
     @State private var showDirectoryPicker = false
     @State private var showShare = false
     @State private var selectedDifficulty: ChartDifficulty = .master
@@ -19,6 +21,10 @@ struct ContentView: View {
 
                         if model.audioURL != nil || model.analysis != nil {
                             songCard
+                        }
+
+                        if model.scoreMIDIURL != nil {
+                            soundFontCard
                         }
 
                         if !model.charts.isEmpty {
@@ -41,6 +47,24 @@ struct ContentView: View {
                         model.importFile(url)
                     },
                     onCancel: { showAudioPicker = false }
+                )
+            }
+            .sheet(isPresented: $showScorePicker) {
+                AudioDocumentPicker(
+                    onPick: { url in
+                        showScorePicker = false
+                        model.importScoreFile(url)
+                    },
+                    onCancel: { showScorePicker = false }
+                )
+            }
+            .sheet(isPresented: $showSoundFontPicker) {
+                AudioDocumentPicker(
+                    onPick: { url in
+                        showSoundFontPicker = false
+                        model.importSoundFont(url)
+                    },
+                    onCancel: { showSoundFontPicker = false }
                 )
             }
             .sheet(isPresented: $showDirectoryPicker) {
@@ -98,12 +122,14 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 14) {
                 sectionTitle("IMPORT MUSIC", icon: "waveform")
 
-                HStack(spacing: 8) {
-                    sourceSelector(.file, icon: "folder.fill", subtitle: "Files")
+                HStack(spacing: 7) {
+                    sourceSelector(.file, icon: "waveform", subtitle: "Audio")
+                    sourceSelector(.score, icon: "music.note.list", subtitle: "Score")
                     sourceSelector(.youtube, icon: "play.rectangle.fill", subtitle: "YouTube")
                 }
 
-                if model.source == .file {
+                switch model.source {
+                case .file:
                     Button {
                         showAudioPicker = true
                     } label: {
@@ -114,7 +140,24 @@ struct ContentView: View {
                     Label("MP3, M4A, WAV and other iOS-readable audio", systemImage: "checkmark.seal.fill")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                } else {
+
+                case .score:
+                    Button {
+                        showScorePicker = true
+                    } label: {
+                        Label("Choose MIDI / MusicXML / PDF", systemImage: "music.note.list")
+                    }
+                    .buttonStyle(ArcadePrimaryButtonStyle(colors: [ArcadePalette.aqua, ArcadePalette.purple]))
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        Label("MIDI + MusicXML use exact note beats and tempo changes.", systemImage: "metronome.fill")
+                        Label("MusicXML: .musicxml, .xml, .mxl", systemImage: "doc.text.fill")
+                        Label("PDF needs OMR to MusicXML first; SmartScore/Audiveris output can be imported here.", systemImage: "doc.viewfinder")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                case .youtube:
                     VStack(spacing: 10) {
                         HStack(spacing: 10) {
                             Image(systemName: "link")
@@ -160,9 +203,73 @@ struct ContentView: View {
                     HStack(spacing: 8) {
                         metric("BPM", String(format: "%.1f", analysis.bpm), ArcadePalette.pink)
                         metric("OFFSET", String(format: "%.3fs", analysis.firstBeat), ArcadePalette.cyan)
-                        metric("ONSETS", "\(analysis.onsets.count)", ArcadePalette.aqua)
+                        metric(model.hasExactScoreTiming ? "NOTES" : "ONSETS", "\(analysis.onsets.count)", ArcadePalette.aqua)
                     }
                 }
+            }
+        }
+    }
+
+    private var soundFontCard: some View {
+        ArcadeCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    sectionTitle("SOUNDFONT STUDIO", icon: "pianokeys")
+                    Spacer()
+                    Text("SF2 / DLS")
+                        .font(.system(size: 10, weight: .black, design: .rounded))
+                        .foregroundStyle(ArcadePalette.purple)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(ArcadePalette.purple.opacity(0.10), in: Capsule())
+                }
+
+                if model.soundFontURL == nil {
+                    Button {
+                        showSoundFontPicker = true
+                    } label: {
+                        Label("Load SoundFont Bank", systemImage: "externaldrive.badge.plus")
+                    }
+                    .buttonStyle(ArcadePrimaryButtonStyle(colors: [ArcadePalette.pink, ArcadePalette.purple]))
+                } else {
+                    HStack {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundStyle(ArcadePalette.aqua)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(model.soundFontName)
+                                .font(.system(.subheadline, design: .rounded, weight: .bold))
+                                .lineLimit(1)
+                            Text("Loaded instrument bank")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Change") {
+                            showSoundFontPicker = true
+                        }
+                        .font(.caption.bold())
+                    }
+                }
+
+                Picker("Instrument", selection: $model.selectedProgram) {
+                    ForEach(GMInstrument.popular) { instrument in
+                        Text("\(instrument.program + 1) • \(instrument.name)")
+                            .tag(instrument.program)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Button {
+                    model.renderScoreAudio()
+                } label: {
+                    Label("Render \(model.selectedInstrumentName)", systemImage: "waveform.badge.plus")
+                }
+                .buttonStyle(ArcadePrimaryButtonStyle(colors: [ArcadePalette.cyan, ArcadePalette.purple]))
+                .disabled(model.soundFontURL == nil || model.isWorking)
+
+                Text("Use any legally obtained SF2/DLS bank. Roland/Yamaha sample banks are not bundled; load your own licensed bank. The score is rendered to 48 kHz PCM first, then AstroDX gets one 320 kbps MP3 compatibility encode.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -205,7 +312,7 @@ struct ContentView: View {
                             Text(selectedDifficulty.name)
                                 .font(.system(.headline, design: .rounded, weight: .black))
                                 .foregroundStyle(ArcadePalette.difficulty(selectedDifficulty))
-                            Text("Generated from musical phrases + beat accents")
+                            Text(model.hasExactScoreTiming ? "Exact MIDI/MusicXML beat grid + musical phrases" : "Generated from musical phrases + beat accents")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -339,9 +446,7 @@ struct ContentView: View {
                 Group {
                     if model.source == source {
                         LinearGradient(
-                            colors: source == .file
-                                ? [ArcadePalette.cyan, ArcadePalette.purple]
-                                : [ArcadePalette.red, ArcadePalette.pink],
+                            colors: sourceGradient(source),
                             startPoint: .leading,
                             endPoint: .trailing
                         )
@@ -372,6 +477,14 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.black.opacity(0.06), lineWidth: 1)
         )
+    }
+
+    private func sourceGradient(_ source: ImportSource) -> [Color] {
+        switch source {
+        case .file: return [ArcadePalette.cyan, ArcadePalette.purple]
+        case .score: return [ArcadePalette.aqua, ArcadePalette.purple]
+        case .youtube: return [ArcadePalette.red, ArcadePalette.pink]
+        }
     }
 
     private func metric(_ label: String, _ value: String, _ color: Color) -> some View {
