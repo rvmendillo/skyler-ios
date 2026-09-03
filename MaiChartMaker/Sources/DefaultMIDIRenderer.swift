@@ -1,11 +1,10 @@
 import Foundation
-import AVFoundation
 import AudioToolbox
+import SwiftMP3
 
 enum DefaultMIDIRendererError: LocalizedError {
     case invalidMIDI(OSStatus)
     case noNotes
-    case cannotCreateBuffer
 
     var errorDescription: String? {
         switch self {
@@ -13,8 +12,6 @@ enum DefaultMIDIRendererError: LocalizedError {
             return "The MIDI file could not be rendered (AudioToolbox status \(status))."
         case .noNotes:
             return "The score contains no playable MIDI notes."
-        case .cannotCreateBuffer:
-            return "Could not create the default instrument audio buffer."
         }
     }
 }
@@ -30,34 +27,24 @@ private struct RenderNote {
 }
 
 enum DefaultMIDIRenderer {
-    static func renderPiano(midiURL: URL) throws -> URL {
+    static func renderPianoMP3(midiURL: URL) throws -> URL {
         let notes = try readNotes(midiURL)
         guard !notes.isEmpty else { throw DefaultMIDIRendererError.noNotes }
 
-        let sampleRate = 48_000.0
+        let sampleRate = 48_000
         let blockFrames = 2048
         let totalDuration = (notes.map(\.end).max() ?? 0) + 0.35
-        let totalFrames = Int64(ceil(totalDuration * sampleRate))
+        let totalFrames = Int64(ceil(totalDuration * Double(sampleRate)))
 
-        guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
+        let encoder = MP3Encoder(options: MP3EncoderOptions(
             sampleRate: sampleRate,
-            channels: 2,
-            interleaved: false
-        ) else {
-            throw DefaultMIDIRendererError.cannotCreateBuffer
-        }
-
-        let out = FileManager.default.temporaryDirectory
-            .appendingPathComponent("default-piano-\(UUID().uuidString).wav")
-        let file = try AVAudioFile(forWriting: out, settings: format.settings)
-
-        guard let buffer = AVAudioPCMBuffer(
-            pcmFormat: format,
-            frameCapacity: AVAudioFrameCount(blockFrames)
-        ) else {
-            throw DefaultMIDIRendererError.cannotCreateBuffer
-        }
+            bitrateKbps: 320,
+            vbr: false,
+            mode: .stereo,
+            quality: 0
+        ))
+        var session = encoder.newSession()
+        var encoded = Data()
 
         let sorted = notes.sorted { $0.start < $1.start }
         var nextIndex = 0
@@ -66,8 +53,8 @@ enum DefaultMIDIRenderer {
 
         while framePosition < totalFrames {
             let framesThisBlock = Int(min(Int64(blockFrames), totalFrames - framePosition))
-            let blockStart = Double(framePosition) / sampleRate
-            let blockEnd = Double(framePosition + Int64(framesThisBlock)) / sampleRate
+            let blockStart = Double(framePosition) / Double(sampleRate)
+            let blockEnd = Double(framePosition + Int64(framesThisBlock)) / Double(sampleRate)
 
             while nextIndex < sorted.count, sorted[nextIndex].start <= blockEnd {
                 active.append(sorted[nextIndex])
@@ -75,40 +62,28 @@ enum DefaultMIDIRenderer {
             }
             active.removeAll { $0.end < blockStart }
 
-            buffer.frameLength = AVAudioFrameCount(framesThisBlock)
-            guard let channels = buffer.floatChannelData else {
-                throw DefaultMIDIRendererError.cannotCreateBuffer
-            }
-
-            let left = channels[0]
-            let right = channels[1]
-
-            for i in 0..<framesThisBlock {
-                left[i] = 0
-                right[i] = 0
-            }
+            var interleaved = [Float](repeating: 0, count: framesThisBlock * 2)
 
             for note in active {
                 let firstSample = max(
                     0,
-                    Int(floor((note.start - blockStart) * sampleRate))
+                    Int(floor((note.start - blockStart) * Double(sampleRate)))
                 )
                 let lastSample = min(
                     framesThisBlock,
-                    Int(ceil((note.end - blockStart) * sampleRate))
+                    Int(ceil((note.end - blockStart) * Double(sampleRate)))
                 )
-
                 guard firstSample < lastSample else { continue }
 
+                let leftGain = sqrt((1.0 - note.pan) * 0.5)
+                let rightGain = sqrt((1.0 + note.pan) * 0.5)
+
                 for i in firstSample..<lastSample {
-                    let absoluteTime = blockStart + Double(i) / sampleRate
+                    let absoluteTime = blockStart + Double(i) / Double(sampleRate)
                     let t = absoluteTime - note.start
                     guard t >= 0 else { continue }
 
-                    let envelope = pianoEnvelope(
-                        time: t,
-                        noteDuration: note.duration
-                    )
+                    let envelope = pianoEnvelope(time: t, noteDuration: note.duration)
                     guard envelope > 0.00001 else { continue }
 
                     let phase = 2.0 * Double.pi * note.frequency * t
@@ -121,32 +96,38 @@ enum DefaultMIDIRenderer {
                         sin(phase * 4.0) * 0.08 +
                         sin(phase * 5.0) * 0.035
 
-                    // Very short deterministic hammer brightness. This gives the
-                    // built-in instrument more piano attack without sample files.
                     sample += sin(phase * 7.03) * 0.10 * hammer
                     sample += sin(phase * 11.11) * 0.045 * hammer
 
                     let gain = 0.105 * pow(note.velocity, 1.25) * envelope
                     let value = sample * gain
 
-                    let leftGain = sqrt((1.0 - note.pan) * 0.5)
-                    let rightGain = sqrt((1.0 + note.pan) * 0.5)
-
-                    left[i] += Float(value * leftGain)
-                    right[i] += Float(value * rightGain)
+                    let base = i * 2
+                    interleaved[base] += Float(value * leftGain)
+                    interleaved[base + 1] += Float(value * rightGain)
                 }
             }
 
-            // Gentle saturation instead of hard clipping when dense chords stack.
             for i in 0..<framesThisBlock {
-                left[i] = Float(tanh(Double(left[i]) * 1.15) * 0.88)
-                right[i] = Float(tanh(Double(right[i]) * 1.15) * 0.88)
+                let base = i * 2
+                interleaved[base] = Float(tanh(Double(interleaved[base]) * 1.15) * 0.88)
+                interleaved[base + 1] = Float(tanh(Double(interleaved[base + 1]) * 1.15) * 0.88)
             }
 
-            try file.write(from: buffer)
+            encoded.append(session.encode(samples: interleaved))
             framePosition += Int64(framesThisBlock)
         }
 
+        encoded.append(session.flush())
+
+        var fileData = Data()
+        fileData.append(session.generateID3Tag())
+        fileData.append(session.generateXingHeader())
+        fileData.append(encoded)
+
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("default-piano-\(UUID().uuidString).mp3")
+        try fileData.write(to: out, options: .atomic)
         return out
     }
 
@@ -233,8 +214,6 @@ enum DefaultMIDIRenderer {
                     let midi = Double(message.note)
                     let frequency = 440.0 * pow(2.0, (midi - 69.0) / 12.0)
                     let normalizedVelocity = max(0.08, Double(message.velocity) / 127.0)
-
-                    // Bass leans left, treble right, centered gently.
                     let pan = max(-0.42, min(0.42, (midi - 60.0) / 48.0))
 
                     output.append(
