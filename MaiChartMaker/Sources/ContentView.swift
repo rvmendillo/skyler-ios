@@ -225,10 +225,23 @@ struct ContentView: View {
                 }
 
                 if model.soundFontURL == nil {
+                    HStack(spacing: 10) {
+                        Image(systemName: "pianokeys")
+                            .foregroundStyle(ArcadePalette.aqua)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Built-in Piano")
+                                .font(.system(.subheadline, design: .rounded, weight: .bold))
+                            Text("Default renderer • no SoundFont required")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+
                     Button {
                         showSoundFontPicker = true
                     } label: {
-                        Label("Load SoundFont Bank", systemImage: "externaldrive.badge.plus")
+                        Label("Load Optional SoundFont Bank", systemImage: "externaldrive.badge.plus")
                     }
                     .buttonStyle(ArcadePrimaryButtonStyle(colors: [ArcadePalette.pink, ArcadePalette.purple]))
                 } else {
@@ -262,12 +275,15 @@ struct ContentView: View {
                 Button {
                     model.renderScoreAudio()
                 } label: {
-                    Label("Render \(model.selectedInstrumentName)", systemImage: "waveform.badge.plus")
+                    Label(
+                        model.soundFontURL == nil ? "Render Built-in Piano MP3" : "Render \(model.selectedInstrumentName)",
+                        systemImage: "waveform.badge.plus"
+                    )
                 }
                 .buttonStyle(ArcadePrimaryButtonStyle(colors: [ArcadePalette.cyan, ArcadePalette.purple]))
-                .disabled(model.soundFontURL == nil || model.isWorking)
+                .disabled(model.isWorking)
 
-                Text("Use any legally obtained SF2/DLS bank. Roland/Yamaha sample banks are not bundled; load your own licensed bank. The score is rendered to 48 kHz PCM first, then AstroDX gets one 320 kbps MP3 compatibility encode.")
+                Text("MIDI/MusicXML automatically render with the built-in piano, then export as a 320 kbps MP3 for AstroDX. Load any legally obtained SF2/DLS bank to replace the default sound. Roland/Yamaha sample banks are not bundled; use your own licensed bank.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
