@@ -42,13 +42,16 @@ jobs:
             "https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/684543d5e5efaef08d02be50dcda8d552478fa60/documentation/LICENSE.txt" \
             -o Resources/GeneralUser-GS-LICENSE.txt
 
-          curl -L --fail --retry 3 \
-            "https://github.com/john-rocky/CoreML-Models/releases/download/basic-pitch-v1/BasicPitch_nmp.mlpackage.zip" \
-            -o /tmp/basic-pitch.zip
-          unzip -q /tmp/basic-pitch.zip -d Resources
-          curl -L --fail --retry 3 \
-            "https://raw.githubusercontent.com/spotify/basic-pitch/main/LICENSE" \
-            -o Resources/BasicPitch-LICENSE.txt
+          rm -rf /tmp/basic-pitch
+          git clone --depth 1 --filter=blob:none --sparse \
+            https://github.com/spotify/basic-pitch.git /tmp/basic-pitch
+          git -C /tmp/basic-pitch sparse-checkout set \
+            basic_pitch/saved_models/icassp_2022/nmp.mlpackage \
+            LICENSE
+          cp -R \
+            /tmp/basic-pitch/basic_pitch/saved_models/icassp_2022/nmp.mlpackage \
+            Resources/BasicPitch_nmp.mlpackage
+          cp /tmp/basic-pitch/LICENSE Resources/BasicPitch-LICENSE.txt
 
           test -f Resources/GeneralUser-GS.sf2
           test -d Resources/BasicPitch_nmp.mlpackage
