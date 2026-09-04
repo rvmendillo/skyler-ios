@@ -14,7 +14,9 @@ struct ContentView: View {
                 }
             } else {
                 HeroSelectView { hero in
-                    let scene = GameScene(size: CGSize(width: 1280, height: 720), heroClass: hero)
+                    // iPhone 16 Plus landscape logical viewport is treated as a 932×430 play window.
+                    // The actual battlefield is much larger and is explored with a follow camera.
+                    let scene = GameScene(size: CGSize(width: 932, height: 430), heroClass: hero)
                     scene.scaleMode = .aspectFill
                     activeClass = hero
                     activeScene = scene
@@ -22,6 +24,7 @@ struct ContentView: View {
             }
         }
         .background(Color.black)
+        .preferredColorScheme(.dark)
     }
 }
 
@@ -37,60 +40,63 @@ private struct HeroSelectView: View {
             )
             .ignoresSafeArea()
 
-            VStack(spacing: 18) {
-                VStack(spacing: 4) {
+            VStack(spacing: 12) {
+                VStack(spacing: 2) {
                     Text("AETHER RIFT")
-                        .font(.system(size: 34, weight: .black, design: .rounded))
+                        .font(.system(size: 28, weight: .black, design: .rounded))
                         .tracking(3)
-                    Text("Choose a battle class")
-                        .font(.subheadline)
+                    Text("3-Lane 5v5 Arena • Choose a battle class")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
-                HStack(spacing: 12) {
-                    ForEach(HeroClass.allCases) { hero in
-                        Button {
-                            onSelect(hero)
-                        } label: {
-                            VStack(spacing: 10) {
-                                Image(systemName: hero.icon)
-                                    .font(.system(size: 28, weight: .bold))
-                                    .frame(width: 58, height: 58)
-                                    .background(.white.opacity(0.10), in: Circle())
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(HeroClass.allCases) { hero in
+                            Button {
+                                onSelect(hero)
+                            } label: {
+                                VStack(spacing: 7) {
+                                    Image(systemName: hero.icon)
+                                        .font(.system(size: 23, weight: .bold))
+                                        .frame(width: 48, height: 48)
+                                        .background(.white.opacity(0.10), in: Circle())
 
-                                Text(hero.rawValue)
-                                    .font(.headline)
+                                    Text(hero.rawValue)
+                                        .font(.subheadline.bold())
 
-                                Text(hero.tagline)
-                                    .font(.caption2)
-                                    .multilineTextAlignment(.center)
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 125, height: 34)
+                                    Text(hero.tagline)
+                                        .font(.system(size: 9))
+                                        .multilineTextAlignment(.center)
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 116, height: 28)
 
-                                Text(hero.skills.map(\.name).joined(separator: " • "))
-                                    .font(.system(size: 9, weight: .medium))
-                                    .multilineTextAlignment(.center)
-                                    .foregroundStyle(.white.opacity(0.65))
-                                    .frame(width: 130, height: 40)
+                                    Text(hero.skills.map(\.name).joined(separator: " • "))
+                                        .font(.system(size: 7.5, weight: .medium))
+                                        .multilineTextAlignment(.center)
+                                        .foregroundStyle(.white.opacity(0.68))
+                                        .frame(width: 120, height: 30)
+                                }
+                                .padding(.vertical, 10)
+                                .padding(.horizontal, 8)
+                                .frame(width: 138, height: 172)
+                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 18)
+                                        .stroke(.white.opacity(0.12), lineWidth: 1)
+                                )
                             }
-                            .padding(.vertical, 14)
-                            .padding(.horizontal, 8)
-                            .frame(maxHeight: 210)
-                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 20)
-                                    .stroke(.white.opacity(0.12), lineWidth: 1)
-                            )
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
+                    .padding(.horizontal, 28)
                 }
 
-                Text("Original MOBA prototype • procedural visuals • offline 1v1 battle simulation")
-                    .font(.caption)
+                Text("Original MOBA map and heroes • optimized for iPhone 16 Plus landscape")
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            .padding(24)
+            .padding(.vertical, 12)
         }
     }
 }
@@ -101,81 +107,87 @@ private struct MatchView: View {
     let onExit: () -> Void
 
     var body: some View {
-        ZStack {
-            SpriteView(scene: scene, preferredFramesPerSecond: 60)
-                .ignoresSafeArea()
+        GeometryReader { geometry in
+            ZStack {
+                SpriteView(scene: scene, preferredFramesPerSecond: 60)
+                    .ignoresSafeArea()
 
-            VStack {
-                HStack {
-                    Button(action: onExit) {
-                        Label("Heroes", systemImage: "chevron.left")
-                            .font(.caption.bold())
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(.black.opacity(0.48), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-
-                    Spacer()
-
-                    Text(heroClass.rawValue.uppercased())
-                        .font(.caption.bold())
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(.black.opacity(0.48), in: Capsule())
-
-                    Spacer()
-
-                    Button {
-                        scene.restartMatch()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .padding(9)
-                            .background(.black.opacity(0.48), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, 18)
-                .padding(.top, 8)
-
-                Spacer()
-
-                HStack(alignment: .bottom) {
-                    Joystick { vector in
-                        scene.setMovement(vector)
-                    }
-
-                    Spacer()
-
-                    HStack(alignment: .bottom, spacing: 9) {
-                        ForEach(Array(heroClass.skills.enumerated()), id: \.offset) { index, skill in
-                            SkillButton(
-                                title: skill.name,
-                                index: index + 1,
-                                isUltimate: index == 3
-                            ) {
-                                scene.castSkill(index)
-                            }
+                VStack(spacing: 0) {
+                    HStack {
+                        Button(action: onExit) {
+                            Label("Heroes", systemImage: "chevron.left")
+                                .font(.caption.bold())
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 7)
+                                .background(.black.opacity(0.52), in: Capsule())
                         }
+                        .buttonStyle(.plain)
+
+                        Spacer()
+
+                        Text(heroClass.rawValue.uppercased())
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(.black.opacity(0.48), in: Capsule())
+
+                        Spacer()
 
                         Button {
-                            scene.basicAttack()
+                            scene.restartMatch()
                         } label: {
-                            VStack(spacing: 3) {
-                                Image(systemName: "burst.fill")
-                                    .font(.title2.bold())
-                                Text("ATTACK")
-                                    .font(.system(size: 8, weight: .black))
-                            }
-                            .frame(width: 76, height: 76)
-                            .background(.white.opacity(0.20), in: Circle())
-                            .overlay(Circle().stroke(.white.opacity(0.45), lineWidth: 2))
+                            Image(systemName: "arrow.clockwise")
+                                .font(.subheadline.bold())
+                                .padding(8)
+                                .background(.black.opacity(0.52), in: Circle())
                         }
                         .buttonStyle(.plain)
                     }
+                    .padding(.leading, max(18, geometry.safeAreaInsets.leading + 8))
+                    .padding(.trailing, max(18, geometry.safeAreaInsets.trailing + 8))
+                    .padding(.top, max(5, geometry.safeAreaInsets.top + 2))
+
+                    Spacer()
+
+                    HStack(alignment: .bottom, spacing: 12) {
+                        Joystick { vector in
+                            scene.setMovement(vector)
+                        }
+
+                        Spacer(minLength: 24)
+
+                        HStack(alignment: .bottom, spacing: 7) {
+                            ForEach(Array(heroClass.skills.enumerated()), id: \.offset) { index, skill in
+                                SkillButton(
+                                    title: skill.name,
+                                    index: index + 1,
+                                    isUltimate: index == 3
+                                ) {
+                                    scene.castSkill(index)
+                                }
+                            }
+
+                            Button {
+                                scene.basicAttack()
+                            } label: {
+                                VStack(spacing: 2) {
+                                    Image(systemName: "burst.fill")
+                                        .font(.title3.bold())
+                                    Text("ATTACK")
+                                        .font(.system(size: 7.5, weight: .black))
+                                }
+                                .frame(width: 72, height: 72)
+                                .background(.white.opacity(0.20), in: Circle())
+                                .overlay(Circle().stroke(.white.opacity(0.48), lineWidth: 2))
+                                .shadow(radius: 4)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.leading, max(20, geometry.safeAreaInsets.leading + 10))
+                    .padding(.trailing, max(20, geometry.safeAreaInsets.trailing + 10))
+                    .padding(.bottom, max(10, geometry.safeAreaInsets.bottom + 6))
                 }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 18)
             }
         }
     }
@@ -189,17 +201,18 @@ private struct SkillButton: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 3) {
+            VStack(spacing: 2) {
                 Text("S\(index)")
-                    .font(.caption2.weight(.black))
+                    .font(.system(size: 9, weight: .black))
                 Text(title)
-                    .font(.system(size: 7, weight: .bold))
+                    .font(.system(size: 6.5, weight: .bold))
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
             }
-            .frame(width: isUltimate ? 68 : 58, height: isUltimate ? 68 : 58)
-            .background(.black.opacity(0.52), in: Circle())
-            .overlay(Circle().stroke(.white.opacity(isUltimate ? 0.62 : 0.28), lineWidth: isUltimate ? 2 : 1))
+            .frame(width: isUltimate ? 64 : 54, height: isUltimate ? 64 : 54)
+            .background(.black.opacity(0.56), in: Circle())
+            .overlay(Circle().stroke(.white.opacity(isUltimate ? 0.68 : 0.30), lineWidth: isUltimate ? 2 : 1))
+            .shadow(radius: isUltimate ? 5 : 2)
         }
         .buttonStyle(.plain)
     }
@@ -209,19 +222,20 @@ private struct Joystick: View {
     let onChange: (CGVector) -> Void
     @State private var knob = CGSize.zero
 
-    private let radius: CGFloat = 58
+    private let radius: CGFloat = 56
 
     var body: some View {
         ZStack {
             Circle()
-                .fill(.black.opacity(0.32))
+                .fill(.black.opacity(0.36))
                 .frame(width: radius * 2, height: radius * 2)
-                .overlay(Circle().stroke(.white.opacity(0.20), lineWidth: 2))
+                .overlay(Circle().stroke(.white.opacity(0.22), lineWidth: 2))
 
             Circle()
-                .fill(.white.opacity(0.28))
-                .frame(width: 52, height: 52)
+                .fill(.white.opacity(0.30))
+                .frame(width: 50, height: 50)
                 .offset(knob)
+                .shadow(radius: 3)
         }
         .contentShape(Circle())
         .gesture(
