@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import Combine
+import UIKit
 
 enum MaimaiPlayMode: String, CaseIterable, Identifiable {
     case auto = "AUTO"
@@ -31,6 +32,13 @@ private struct MaimaiPreviewEvent: Identifiable {
         result.formUnion(touchRegions.map { "T:\($0)" })
         return result
     }
+}
+
+private struct MaimaiHitFeedback: Identifiable {
+    let id = UUID()
+    let sensorKey: String
+    let label: String
+    let grade: String
 }
 
 private enum SimaiPreviewParser {
@@ -101,9 +109,7 @@ private enum SimaiPreviewParser {
         return Double(value)
     }
 
-    private static func removingTempoPrefix(
-        from token: String
-    ) -> String {
+    private static func removingTempoPrefix(from token: String) -> String {
         guard
             let open = token.firstIndex(of: "("),
             let close = token[open...].firstIndex(of: ")")
@@ -284,9 +290,11 @@ struct MaimaiPlaytestView: View {
     @State private var missedIDs: Set<Int> = []
     @State private var partHits: [Int: Set<String>] = [:]
     @State private var partErrors: [Int: Double] = [:]
+    @State private var firstTimingDelta: [Int: Double] = [:]
     @State private var activeHoldSensors: [Int: String] = [:]
     @State private var activeSlideIDs: Set<Int> = []
     @State private var activeSensors: Set<String> = []
+    @State private var feedbackPulses: [MaimaiHitFeedback] = []
     @State private var score = 0
     @State private var combo = 0
     @State private var bestCombo = 0
@@ -318,7 +326,7 @@ struct MaimaiPlaytestView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label(
-                    "BUILT-IN MAIMAI PLAYTEST",
+                    "MAIMAI PLAYTEST",
                     systemImage: "circle.grid.cross.fill"
                 )
                 .font(.system(size: 10, weight: .black, design: .rounded))
@@ -326,8 +334,8 @@ struct MaimaiPlaytestView: View {
 
                 Spacer()
 
-                Text(mode == .manual ? "MULTI-TOUCH" : "AUTO")
-                    .font(.system(size: 9, weight: .black, design: .rounded))
+                Text(mode == .manual ? "MULTI-TOUCH PLAY" : "AUTO PLAYTEST")
+                    .font(.system(size: 8, weight: .black, design: .rounded))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .foregroundStyle(.white)
@@ -357,125 +365,204 @@ struct MaimaiPlaytestView: View {
                 let side = min(proxy.size.width, proxy.size.height)
                 let center = CGPoint(x: proxy.size.width / 2, y: proxy.size.height / 2)
                 let hitRadius = side * 0.42
-                let spawnRadius = side * 0.10
+                let spawnRadius = side * 0.095
 
                 ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.white,
-                                    ArcadePalette.cyan.opacity(0.07),
-                                    ArcadePalette.purple.opacity(0.08)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: side * 0.92, height: side * 0.92)
+                    playfieldBackground(side: side)
+                        .position(center)
 
-                    Circle()
-                        .stroke(
-                            ArcadePalette.difficulty(difficulty).opacity(0.38),
-                            lineWidth: 5
-                        )
-                        .frame(width: hitRadius * 2, height: hitRadius * 2)
+                    playfieldLineGuides(
+                        center: center,
+                        hitRadius: hitRadius
+                    )
 
-                    touchSensorGuides(center: center, hitRadius: hitRadius)
+                    touchSensorGuides(
+                        center: center,
+                        hitRadius: hitRadius
+                    )
 
                     ForEach(1...8, id: \.self) { lane in
-                        let point = lanePoint(lane: lane, radius: hitRadius, center: center)
+                        let point = lanePoint(
+                            lane: lane,
+                            radius: hitRadius,
+                            center: center
+                        )
                         let pressed = activeSensors.contains("L\(lane)")
 
                         ZStack {
                             Circle()
-                                .fill(pressed ? ArcadePalette.pink : ArcadePalette.ink.opacity(0.92))
+                                .fill(
+                                    pressed
+                                    ? ArcadePalette.pink
+                                    : Color.black.opacity(0.92)
+                                )
+                                .shadow(
+                                    color: pressed
+                                        ? ArcadePalette.pink.opacity(0.8)
+                                        : .clear,
+                                    radius: 9
+                                )
+
+                            Circle()
+                                .stroke(.white.opacity(0.85), lineWidth: 2)
+
                             Text("\(lane)")
-                                .font(.system(size: 11, weight: .black, design: .rounded))
+                                .font(.system(
+                                    size: 11,
+                                    weight: .black,
+                                    design: .rounded
+                                ))
                                 .foregroundStyle(.white)
                         }
-                        .frame(width: pressed ? 39 : 34, height: pressed ? 39 : 34)
+                        .frame(
+                            width: pressed ? 41 : 35,
+                            height: pressed ? 41 : 35
+                        )
                         .position(point)
                     }
 
                     ForEach(visibleEvents) { event in
                         let delta = event.time - elapsed
-                        let progress = min(1, max(0, 1 - delta / approachTime))
-                        let radius = spawnRadius + (hitRadius - spawnRadius) * CGFloat(progress)
+                        let progress = min(
+                            1,
+                            max(0, 1 - delta / approachTime)
+                        )
+                        let radius =
+                            spawnRadius +
+                            (hitRadius - spawnRadius) * CGFloat(progress)
 
                         if case .slide(let destination) = event.kind,
                            let lane = event.lanes.first {
-                            let start = lanePoint(lane: lane, radius: radius, center: center)
-                            let end = lanePoint(lane: destination, radius: hitRadius, center: center)
-
-                            Path { path in
-                                path.move(to: start)
-                                path.addLine(to: end)
-                            }
-                            .stroke(
-                                ArcadePalette.aqua.opacity(0.72),
-                                style: StrokeStyle(lineWidth: 5, lineCap: .round, dash: [8, 5])
+                            slideGuide(
+                                from: lane,
+                                to: destination,
+                                radius: radius,
+                                hitRadius: hitRadius,
+                                center: center
                             )
                         }
 
                         if !event.touchRegions.isEmpty {
-                            ForEach(Array(event.touchRegions.enumerated()), id: \.offset) { _, region in
-                                let point = touchPoint(region: region, center: center, hitRadius: hitRadius)
+                            ForEach(
+                                Array(event.touchRegions.enumerated()),
+                                id: \.offset
+                            ) { _, region in
+                                let point = touchPoint(
+                                    region: region,
+                                    center: center,
+                                    hitRadius: hitRadius
+                                )
+
                                 touchPreviewNote(
                                     region: region,
                                     kind: event.kind,
                                     progress: progress,
                                     holdRemaining: holdRemainingFraction(event),
-                                    remainingSeconds: holdRemainingSeconds(event)
+                                    remainingSeconds: holdRemainingSeconds(event),
+                                    isEach: event.expectedKeys.count > 1
                                 )
-                                .scaleEffect(0.58 + 0.42 * progress)
                                 .position(point)
-                                .zIndex(7)
+                                .zIndex(8)
                             }
                         }
 
-                        ForEach(Array(event.lanes.enumerated()), id: \.offset) { _, lane in
-                            let point = lanePoint(lane: lane, radius: radius, center: center)
-                            previewNote(event.kind)
+                        ForEach(
+                            Array(event.lanes.enumerated()),
+                            id: \.offset
+                        ) { _, lane in
+                            let point = lanePoint(
+                                lane: lane,
+                                radius: radius,
+                                center: center
+                            )
+
+                            previewNote(
+                                event.kind,
+                                isEach: event.expectedKeys.count > 1
+                            )
+                            .position(point)
+                        }
+                    }
+
+                    ForEach(feedbackPulses) { pulse in
+                        if let point = feedbackPoint(
+                            key: pulse.sensorKey,
+                            center: center,
+                            hitRadius: hitRadius
+                        ) {
+                            hitFeedbackView(pulse)
                                 .position(point)
+                                .zIndex(30)
                         }
                     }
 
                     VStack(spacing: 2) {
+                        Text("\(combo)")
+                            .font(.system(
+                                size: 30,
+                                weight: .black,
+                                design: .rounded
+                            ))
+                            .foregroundStyle(
+                                combo > 0
+                                    ? ArcadePalette.pink
+                                    : Color.white.opacity(0.82)
+                            )
+
+                        Text(combo > 0 ? "COMBO" : lastJudgment)
+                            .font(.system(
+                                size: 9,
+                                weight: .black,
+                                design: .rounded
+                            ))
+                            .foregroundStyle(Color.white.opacity(0.72))
+
                         Text(String(format: "%.2f", elapsed))
-                            .font(.system(.title3, design: .rounded, weight: .black))
-
-                        Text(mode == .manual ? "PLAY" : "AUTO PLAYTEST")
-                            .font(.system(size: 8, weight: .black, design: .rounded))
-                            .foregroundStyle(.secondary)
-
-                        Text("\(resolvedCount) / \(events.count)")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .font(.system(
+                                size: 10,
+                                weight: .bold,
+                                design: .monospaced
+                            ))
+                            .foregroundStyle(Color.white.opacity(0.55))
                     }
-                    .frame(width: 100, height: 100)
-                    .background(.ultraThinMaterial, in: Circle())
+                    .frame(width: 104, height: 104)
+                    .background(
+                        Circle()
+                            .fill(Color.black.opacity(0.52))
+                            .overlay(
+                                Circle().stroke(
+                                    ArcadePalette.aqua.opacity(0.24),
+                                    lineWidth: 1
+                                )
+                            )
+                    )
 
                     if mode == .manual {
                         MaimaiTouchInputSurface { sensor, active in
                             handleSensor(sensor, active: active)
                         }
-                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .frame(
+                            width: proxy.size.width,
+                            height: proxy.size.height
+                        )
                         .allowsHitTesting(isPlaying)
-                        .zIndex(20)
+                        .zIndex(40)
                     }
                 }
                 .frame(width: proxy.size.width, height: proxy.size.height)
             }
-            .frame(height: 380)
+            .frame(height: 400)
 
             HStack(spacing: 9) {
                 Button {
                     isPlaying ? pause() : play()
                 } label: {
                     Label(
-                        isPlaying ? "Pause" : (elapsed > 0 ? "Resume" : "Play"),
-                        systemImage: isPlaying ? "pause.fill" : "play.fill"
+                        isPlaying
+                            ? "Pause"
+                            : (elapsed > 0 ? "Resume" : "Play"),
+                        systemImage:
+                            isPlaying ? "pause.fill" : "play.fill"
                     )
                     .frame(maxWidth: .infinity)
                 }
@@ -484,18 +571,34 @@ struct MaimaiPlaytestView: View {
                 Button {
                     restart()
                 } label: {
-                    Label("Restart", systemImage: "arrow.counterclockwise")
+                    Label(
+                        "Restart",
+                        systemImage: "arrow.counterclockwise"
+                    )
                 }
                 .buttonStyle(.bordered)
             }
 
             HStack(spacing: 8) {
-                Image(systemName: audioURL == nil ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                    .foregroundStyle(audioURL == nil ? .secondary : ArcadePalette.aqua)
+                Image(
+                    systemName:
+                        audioURL == nil
+                        ? "speaker.slash.fill"
+                        : "speaker.wave.2.fill"
+                )
+                .foregroundStyle(
+                    audioURL == nil
+                        ? .secondary
+                        : ArcadePalette.aqua
+                )
 
-                Text(audioURL == nil ? "TRACK AUDIO NOT RENDERED" : "TRACK AUDIO")
-                    .font(.system(size: 9, weight: .black, design: .rounded))
-                    .foregroundStyle(.secondary)
+                Text(
+                    audioURL == nil
+                    ? "TRACK AUDIO NOT RENDERED"
+                    : "TRACK AUDIO"
+                )
+                .font(.system(size: 9, weight: .black, design: .rounded))
+                .foregroundStyle(.secondary)
 
                 Slider(value: $trackVolume, in: 0...1, step: 0.05)
                     .disabled(audioURL == nil)
@@ -513,7 +616,7 @@ struct MaimaiPlaytestView: View {
                     .font(.system(size: 9, weight: .black, design: .rounded))
                     .foregroundStyle(.secondary)
 
-                Slider(value: $noteSpeed, in: 0.75...2.0, step: 0.05)
+                Slider(value: $noteSpeed, in: 0.75...2.2, step: 0.05)
 
                 Text(String(format: "%.2fx", noteSpeed))
                     .font(.caption.bold())
@@ -522,10 +625,10 @@ struct MaimaiPlaytestView: View {
 
             Text(
                 mode == .manual
-                ? "PLAY mode uses real multi-touch input: outer ring = lanes 1–8, inner B/E sensor rings = TOUCH, center = C TOUCH HOLD. Dragging across outer lanes can complete slides."
+                ? "PLAY mode: outer white ring = lanes 1–8; inner A/B/D/E guides = DX TOUCH sensors; normal TOUCH notes stay on their sensor while arrows close inward. Hold C in the middle for Ch[] notes and drag between outer lanes for slides."
                 : (audioURL == nil
-                   ? "Visual playtest uses the chart tempo until score audio is rendered."
-                   : "Autoplay is synchronized to the current track audio and selected chart difficulty.")
+                    ? "Visual playtest follows chart timing until track audio exists."
+                    : "Autoplay is synchronized to the current track audio and selected chart difficulty.")
             )
             .font(.caption2)
             .foregroundStyle(.secondary)
@@ -573,25 +676,113 @@ struct MaimaiPlaytestView: View {
             let lifetime = max(0.12, event.holdDuration)
 
             if event.kind == .hold || event.kind == .touchHold {
-                return delta <= approachTime && elapsed <= event.time + lifetime
+                return delta <= approachTime &&
+                       elapsed <= event.time + lifetime
             }
 
             if case .slide = event.kind {
-                return delta <= approachTime && elapsed <= event.time + lifetime + 0.15
+                return delta <= approachTime &&
+                       elapsed <= event.time + lifetime + 0.15
             }
 
             return delta <= approachTime && delta >= -0.20
         }
     }
 
-    private var resolvedCount: Int {
-        mode == .manual
-            ? judgedIDs.count + missedIDs.count
-            : events.filter { $0.time <= elapsed }.count
+    private var chartEndTime: Double {
+        events.map {
+            $0.time + max(0, $0.holdDuration)
+        }.max() ?? 0
     }
 
-    private var chartEndTime: Double {
-        events.map { $0.time + max(0, $0.holdDuration) }.max() ?? 0
+    private func playfieldBackground(side: CGFloat) -> some View {
+        Circle()
+            .fill(
+                RadialGradient(
+                    colors: [
+                        Color(red: 0.08, green: 0.10, blue: 0.15),
+                        Color(red: 0.02, green: 0.025, blue: 0.05),
+                        Color.black
+                    ],
+                    center: .center,
+                    startRadius: side * 0.04,
+                    endRadius: side * 0.48
+                )
+            )
+            .overlay(
+                Circle()
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            )
+            .frame(width: side * 0.94, height: side * 0.94)
+    }
+
+    @ViewBuilder
+    private func playfieldLineGuides(
+        center: CGPoint,
+        hitRadius: CGFloat
+    ) -> some View {
+        Path { path in
+            for lane in 1...8 {
+                let inner = lanePoint(
+                    lane: lane,
+                    radius: hitRadius * 0.15,
+                    center: center
+                )
+                let outer = lanePoint(
+                    lane: lane,
+                    radius: hitRadius,
+                    center: center
+                )
+                path.move(to: inner)
+                path.addLine(to: outer)
+            }
+        }
+        .stroke(
+            Color.white.opacity(0.075),
+            style: StrokeStyle(lineWidth: 1, dash: [3, 5])
+        )
+
+        ForEach([0.36, 0.52, 0.66, 0.82], id: \.self) { scale in
+            Circle()
+                .stroke(
+                    Color.white.opacity(scale == 0.82 ? 0.10 : 0.055),
+                    style: StrokeStyle(
+                        lineWidth: scale == 0.82 ? 1.1 : 0.8,
+                        dash: scale == 0.82 ? [5, 5] : [2, 6]
+                    )
+                )
+                .frame(
+                    width: hitRadius * 2 * scale,
+                    height: hitRadius * 2 * scale
+                )
+                .position(center)
+        }
+
+        Path { path in
+            let radius = hitRadius * 0.58
+            let first = lanePoint(
+                lane: 1,
+                radius: radius,
+                center: center
+            )
+            path.move(to: first)
+            for lane in 2...8 {
+                path.addLine(
+                    to: lanePoint(
+                        lane: lane,
+                        radius: radius,
+                        center: center
+                    )
+                )
+            }
+            path.closeSubpath()
+        }
+        .stroke(Color.white.opacity(0.07), lineWidth: 1)
+
+        Circle()
+            .stroke(Color.white.opacity(0.92), lineWidth: 3)
+            .frame(width: hitRadius * 2, height: hitRadius * 2)
+            .position(center)
     }
 
     @ViewBuilder
@@ -600,70 +791,154 @@ struct MaimaiPlaytestView: View {
         hitRadius: CGFloat
     ) -> some View {
         ForEach(1...8, id: \.self) { lane in
-            let b = "B\(lane)"
-            let e = "E\(lane)"
-
-            sensorGuide(region: b)
-                .position(touchPoint(region: b, center: center, hitRadius: hitRadius))
-
-            sensorGuide(region: e)
-                .position(touchPoint(region: e, center: center, hitRadius: hitRadius))
+            ForEach(["A", "B", "D", "E"], id: \.self) { prefix in
+                let region = "\(prefix)\(lane)"
+                sensorGuide(region: region)
+                    .position(
+                        touchPoint(
+                            region: region,
+                            center: center,
+                            hitRadius: hitRadius
+                        )
+                    )
+            }
         }
 
         Circle()
-            .stroke(activeSensors.contains("T:C") ? ArcadePalette.pink : ArcadePalette.aqua.opacity(0.18), lineWidth: 2)
+            .fill(
+                activeSensors.contains("T:C")
+                    ? ArcadePalette.pink.opacity(0.14)
+                    : Color.clear
+            )
+            .overlay(
+                Circle().stroke(
+                    activeSensors.contains("T:C")
+                        ? ArcadePalette.pink
+                        : ArcadePalette.aqua.opacity(0.18),
+                    lineWidth: activeSensors.contains("T:C") ? 2.5 : 1
+                )
+            )
             .frame(width: 82, height: 82)
             .position(center)
     }
 
     private func sensorGuide(region: String) -> some View {
         let active = activeSensors.contains("T:\(region)")
-        return Circle()
-            .fill(active ? ArcadePalette.pink.opacity(0.30) : Color.clear)
-            .overlay(
-                Circle().stroke(
-                    active ? ArcadePalette.pink : ArcadePalette.aqua.opacity(0.13),
-                    lineWidth: active ? 2 : 1
-                )
+        let size: CGFloat
+        switch region.prefix(1) {
+        case "B": size = 19
+        case "E": size = 23
+        case "D": size = 24
+        default: size = 26
+        }
+
+        return RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(
+                active
+                    ? ArcadePalette.aqua.opacity(0.26)
+                    : Color.white.opacity(0.015)
             )
-            .frame(width: region.hasPrefix("B") ? 22 : 27, height: region.hasPrefix("B") ? 22 : 27)
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(
+                        active
+                            ? ArcadePalette.aqua.opacity(0.92)
+                            : Color.white.opacity(0.075),
+                        lineWidth: active ? 1.8 : 0.8
+                    )
+            )
+            .frame(width: size, height: size)
+            .rotationEffect(.degrees(45))
     }
 
     @ViewBuilder
-    private func previewNote(_ kind: MaimaiPreviewKind) -> some View {
+    private func slideGuide(
+        from lane: Int,
+        to destination: Int,
+        radius: CGFloat,
+        hitRadius: CGFloat,
+        center: CGPoint
+    ) -> some View {
+        let start = lanePoint(
+            lane: lane,
+            radius: radius,
+            center: center
+        )
+        let end = lanePoint(
+            lane: destination,
+            radius: hitRadius,
+            center: center
+        )
+
+        Path { path in
+            path.move(to: start)
+            path.addLine(to: end)
+        }
+        .stroke(
+            Color.cyan.opacity(0.82),
+            style: StrokeStyle(
+                lineWidth: 7,
+                lineCap: .round,
+                dash: [10, 7]
+            )
+        )
+        .shadow(color: Color.cyan.opacity(0.35), radius: 5)
+    }
+
+    @ViewBuilder
+    private func previewNote(
+        _ kind: MaimaiPreviewKind,
+        isEach: Bool
+    ) -> some View {
+        let primary = isEach ? ArcadePalette.yellow : ArcadePalette.pink
+
         switch kind {
         case .tap:
-            Circle()
-                .fill(ArcadePalette.pink)
-                .overlay(Circle().stroke(.white, lineWidth: 2))
-                .frame(width: 29, height: 29)
+            ZStack {
+                Circle()
+                    .fill(primary)
+                Circle()
+                    .stroke(.white, lineWidth: 2.5)
+                Circle()
+                    .stroke(Color.white.opacity(0.55), lineWidth: 1)
+                    .padding(5)
+            }
+            .frame(width: 31, height: 31)
+            .shadow(color: primary.opacity(0.45), radius: 5)
 
         case .breakTap:
             ZStack {
                 Circle().fill(ArcadePalette.yellow)
+                Circle().stroke(.white, lineWidth: 2)
                 Image(systemName: "sparkles")
                     .font(.caption.bold())
                     .foregroundStyle(ArcadePalette.ink)
             }
-            .frame(width: 31, height: 31)
+            .frame(width: 33, height: 33)
+            .shadow(color: ArcadePalette.yellow.opacity(0.55), radius: 6)
 
         case .hold:
             ZStack {
-                Circle().fill(ArcadePalette.aqua)
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(primary)
+                    .frame(width: 28, height: 40)
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(.white, lineWidth: 2)
+                    .frame(width: 28, height: 40)
                 Text("H")
                     .font(.system(size: 11, weight: .black, design: .rounded))
                     .foregroundStyle(.white)
             }
-            .frame(width: 31, height: 31)
 
         case .slide:
             ZStack {
-                Circle().fill(ArcadePalette.pink)
-                Image(systemName: "arrow.right")
-                    .font(.caption.bold())
+                Circle().fill(primary)
+                Circle().stroke(.white, lineWidth: 2)
+                Image(systemName: "star.fill")
+                    .font(.system(size: 13, weight: .black))
                     .foregroundStyle(.white)
             }
-            .frame(width: 31, height: 31)
+            .frame(width: 32, height: 32)
 
         case .touch, .touchHold:
             EmptyView()
@@ -676,66 +951,170 @@ struct MaimaiPlaytestView: View {
         kind: MaimaiPreviewKind,
         progress: Double,
         holdRemaining: Double,
-        remainingSeconds: Double
+        remainingSeconds: Double,
+        isEach: Bool
     ) -> some View {
         if kind == .touchHold, region == "C" {
             ZStack {
                 Circle()
-                    .stroke(ArcadePalette.aqua.opacity(0.22), lineWidth: 12)
+                    .stroke(ArcadePalette.aqua.opacity(0.20), lineWidth: 12)
                     .frame(width: 98, height: 98)
 
                 Circle()
-                    .trim(from: 0, to: max(0.015, elapsed < eventTimeForActiveCenterHold ? 1.0 : holdRemaining))
+                    .trim(
+                        from: 0,
+                        to: max(
+                            0.015,
+                            elapsed < eventTimeForActiveCenterHold
+                                ? 1.0
+                                : holdRemaining
+                        )
+                    )
                     .stroke(
                         ArcadePalette.pink,
-                        style: StrokeStyle(lineWidth: 8, lineCap: .round)
+                        style: StrokeStyle(
+                            lineWidth: 8,
+                            lineCap: .round
+                        )
                     )
                     .rotationEffect(.degrees(-90))
                     .frame(width: 82, height: 82)
 
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
                     .fill(
                         LinearGradient(
-                            colors: [ArcadePalette.aqua, ArcadePalette.purple],
+                            colors: [
+                                ArcadePalette.aqua,
+                                ArcadePalette.purple
+                            ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
-                    .frame(width: 58, height: 58)
+                    .frame(width: 56, height: 56)
                     .rotationEffect(.degrees(45))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 13)
+                            .stroke(.white.opacity(0.85), lineWidth: 2)
+                            .frame(width: 56, height: 56)
+                            .rotationEffect(.degrees(45))
+                    )
 
                 VStack(spacing: 1) {
                     Text("HOLD")
-                        .font(.system(size: 9, weight: .black, design: .rounded))
+                        .font(.system(
+                            size: 9,
+                            weight: .black,
+                            design: .rounded
+                        ))
                     if remainingSeconds > 0 {
                         Text(String(format: "%.1f", remainingSeconds))
-                            .font(.system(size: 13, weight: .black, design: .rounded))
+                            .font(.system(
+                                size: 13,
+                                weight: .black,
+                                design: .rounded
+                            ))
                     }
                 }
                 .foregroundStyle(.white)
             }
         } else {
-            ZStack {
-                Circle()
-                    .fill(region.hasPrefix("B") ? ArcadePalette.aqua : ArcadePalette.pink)
-                    .overlay(Circle().stroke(.white, lineWidth: 2))
-                VStack(spacing: 0) {
-                    Image(systemName: "hand.tap.fill")
-                        .font(.system(size: 11, weight: .bold))
-                    Text(region)
-                        .font(.system(size: 7, weight: .black, design: .rounded))
-                }
-                .foregroundStyle(.white)
-            }
-            .frame(width: 34, height: 34)
-            .opacity(0.62 + 0.38 * progress)
+            closingTouchNote(
+                region: region,
+                progress: progress,
+                isEach: isEach
+            )
         }
+    }
+
+    private func closingTouchNote(
+        region: String,
+        progress: Double,
+        isEach: Bool
+    ) -> some View {
+        let noteColor = isEach
+            ? ArcadePalette.yellow
+            : ArcadePalette.aqua
+        let arrowColor = isEach
+            ? ArcadePalette.yellow
+            : Color.cyan
+        let distance = 34.0 - 22.0 * min(1, max(0, progress))
+
+        return ZStack {
+            ForEach(0..<8, id: \.self) { index in
+                Image(systemName: "chevron.compact.down")
+                    .font(.system(size: 13, weight: .black))
+                    .foregroundStyle(arrowColor)
+                    .shadow(color: arrowColor.opacity(0.65), radius: 3)
+                    .offset(y: -distance)
+                    .rotationEffect(.degrees(Double(index) * 45))
+            }
+
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(noteColor)
+                .frame(width: 29, height: 29)
+                .rotationEffect(.degrees(45))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(.white, lineWidth: 2)
+                        .frame(width: 29, height: 29)
+                        .rotationEffect(.degrees(45))
+                )
+                .shadow(color: noteColor.opacity(0.65), radius: 6)
+
+            Circle()
+                .fill(Color.white.opacity(0.88))
+                .frame(width: 8, height: 8)
+
+            Text(region)
+                .font(.system(size: 7, weight: .black, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.92))
+                .offset(y: 22)
+        }
+        .frame(width: 82, height: 82)
     }
 
     private var eventTimeForActiveCenterHold: Double {
         visibleEvents.first(where: {
             $0.kind == .touchHold && $0.touchRegions.contains("C")
         })?.time ?? .infinity
+    }
+
+    @ViewBuilder
+    private func hitFeedbackView(_ feedback: MaimaiHitFeedback) -> some View {
+        let color = feedbackColor(feedback.grade)
+
+        ZStack {
+            Circle()
+                .stroke(color.opacity(0.35), lineWidth: 3)
+                .frame(width: 54, height: 54)
+
+            Circle()
+                .stroke(color.opacity(0.70), lineWidth: 2)
+                .frame(width: 38, height: 38)
+
+            VStack(spacing: 0) {
+                Text(feedback.label.components(separatedBy: "\n").first ?? feedback.label)
+                    .font(.system(size: 9, weight: .black, design: .rounded))
+                if feedback.label.contains("\n") {
+                    Text(feedback.label.components(separatedBy: "\n").last ?? "")
+                        .font(.system(size: 6, weight: .black, design: .rounded))
+                }
+            }
+            .foregroundStyle(color)
+            .offset(y: -34)
+        }
+        .shadow(color: color.opacity(0.45), radius: 6)
+        .transition(.scale.combined(with: .opacity))
+    }
+
+    private func feedbackColor(_ grade: String) -> Color {
+        switch grade {
+        case "PERFECT": return ArcadePalette.yellow
+        case "GREAT": return ArcadePalette.aqua
+        case "GOOD": return ArcadePalette.purple
+        default: return Color.red
+        }
     }
 
     private func touchPoint(
@@ -753,12 +1132,17 @@ struct MaimaiPlaytestView: View {
         let radius: CGFloat
         switch prefix {
         case "A": radius = hitRadius * 0.82
-        case "B": radius = hitRadius * 0.42
-        case "D": radius = hitRadius * 0.54
-        default: radius = hitRadius * 0.66
+        case "B": radius = hitRadius * 0.36
+        case "D": radius = hitRadius * 0.66
+        case "E": radius = hitRadius * 0.52
+        default: radius = hitRadius * 0.52
         }
 
-        return lanePoint(lane: lane, radius: radius, center: center)
+        return lanePoint(
+            lane: lane,
+            radius: radius,
+            center: center
+        )
     }
 
     private func lanePoint(
@@ -766,11 +1150,39 @@ struct MaimaiPlaytestView: View {
         radius: CGFloat,
         center: CGPoint
     ) -> CGPoint {
-        let angle = -Double.pi / 2 + Double(lane - 1) * (2 * Double.pi / 8)
+        let angle =
+            -Double.pi / 2 +
+            Double(lane - 1) * (2 * Double.pi / 8)
         return CGPoint(
             x: center.x + cos(angle) * radius,
             y: center.y + sin(angle) * radius
         )
+    }
+
+    private func feedbackPoint(
+        key: String,
+        center: CGPoint,
+        hitRadius: CGFloat
+    ) -> CGPoint? {
+        if key.hasPrefix("L"),
+           let lane = Int(key.dropFirst()) {
+            return lanePoint(
+                lane: lane,
+                radius: hitRadius,
+                center: center
+            )
+        }
+
+        if key.hasPrefix("T:") {
+            let region = String(key.dropFirst(2))
+            return touchPoint(
+                region: region,
+                center: center,
+                hitRadius: hitRadius
+            )
+        }
+
+        return nil
     }
 
     private func handleSensor(
@@ -797,8 +1209,6 @@ struct MaimaiPlaytestView: View {
     private func judgeSensorStart(_ sensor: MaimaiInputSensor) {
         let key = sensor.key
 
-        // A slide is completed by reaching its destination sensor after its
-        // start has already been judged.
         if case .lane(let lane) = sensor {
             let slideCandidate = events
                 .filter { event in
@@ -820,7 +1230,9 @@ struct MaimaiPlaytestView: View {
                 }
 
             if let slideCandidate {
-                let target = slideCandidate.time + max(0.08, slideCandidate.holdDuration)
+                let target =
+                    slideCandidate.time +
+                    max(0.08, slideCandidate.holdDuration)
                 let endError = abs(elapsed - target)
                 let startError = partErrors[slideCandidate.id] ?? 0
                 complete(
@@ -847,10 +1259,16 @@ struct MaimaiPlaytestView: View {
         guard let event = candidates.first else {
             lastJudgment = "MISS"
             combo = 0
+            hapticMiss()
             return
         }
 
-        let error = abs(event.time - elapsed)
+        let signedDelta = elapsed - event.time
+        let error = abs(signedDelta)
+        if firstTimingDelta[event.id] == nil {
+            firstTimingDelta[event.id] = signedDelta
+        }
+
         partErrors[event.id] = max(partErrors[event.id] ?? 0, error)
         var hits = partHits[event.id] ?? []
         hits.insert(key)
@@ -867,7 +1285,10 @@ struct MaimaiPlaytestView: View {
 
         case .tap, .breakTap, .touch:
             if event.expectedKeys.isSubset(of: hits) {
-                complete(event, error: partErrors[event.id] ?? error)
+                complete(
+                    event,
+                    error: partErrors[event.id] ?? error
+                )
             }
         }
     }
@@ -882,14 +1303,19 @@ struct MaimaiPlaytestView: View {
                 continue
             }
 
-            let heldUntil = event.time + max(0.08, event.holdDuration)
-            let required = event.time + max(0.08, event.holdDuration) * 0.75
+            let heldUntil =
+                event.time + max(0.08, event.holdDuration)
+            let required =
+                event.time + max(0.08, event.holdDuration) * 0.75
 
             if elapsed >= required {
                 let releaseError = max(0, heldUntil - elapsed)
                 complete(
                     event,
-                    error: max(partErrors[id] ?? 0, min(goodWindow, releaseError))
+                    error: max(
+                        partErrors[id] ?? 0,
+                        min(goodWindow, releaseError)
+                    )
                 )
             } else {
                 miss(event)
@@ -904,7 +1330,10 @@ struct MaimaiPlaytestView: View {
         var toMiss: [MaimaiPreviewEvent] = []
 
         for event in events {
-            guard !judgedIDs.contains(event.id), !missedIDs.contains(event.id) else {
+            guard
+                !judgedIDs.contains(event.id),
+                !missedIDs.contains(event.id)
+            else {
                 continue
             }
 
@@ -949,7 +1378,10 @@ struct MaimaiPlaytestView: View {
         _ event: MaimaiPreviewEvent,
         error: Double
     ) {
-        guard !judgedIDs.contains(event.id), !missedIDs.contains(event.id) else {
+        guard
+            !judgedIDs.contains(event.id),
+            !missedIDs.contains(event.id)
+        else {
             return
         }
 
@@ -969,22 +1401,79 @@ struct MaimaiPlaytestView: View {
         bestCombo = max(bestCombo, combo)
         lastJudgment = grade
         judgedIDs.insert(event.id)
+
+        let timing = firstTimingDelta[event.id] ?? 0
+        let timingSuffix: String
+        if abs(timing) <= 0.015 {
+            timingSuffix = ""
+        } else {
+            timingSuffix = timing < 0 ? "\nEARLY" : "\nLATE"
+        }
+
+        let label = grade + timingSuffix
+        spawnFeedback(
+            for: event,
+            label: label,
+            grade: grade
+        )
+        hapticHit(grade)
+
         partHits.removeValue(forKey: event.id)
         partErrors.removeValue(forKey: event.id)
+        firstTimingDelta.removeValue(forKey: event.id)
         activeHoldSensors.removeValue(forKey: event.id)
         activeSlideIDs.remove(event.id)
     }
 
     private func miss(_ event: MaimaiPreviewEvent) {
-        guard !judgedIDs.contains(event.id), !missedIDs.contains(event.id) else {
+        guard
+            !judgedIDs.contains(event.id),
+            !missedIDs.contains(event.id)
+        else {
             return
         }
 
         missedIDs.insert(event.id)
         combo = 0
         lastJudgment = "MISS"
+        spawnFeedback(
+            for: event,
+            label: "MISS",
+            grade: "MISS"
+        )
+        hapticMiss()
+
         partHits.removeValue(forKey: event.id)
         partErrors.removeValue(forKey: event.id)
+        firstTimingDelta.removeValue(forKey: event.id)
+    }
+
+    private func spawnFeedback(
+        for event: MaimaiPreviewEvent,
+        label: String,
+        grade: String
+    ) {
+        let keys = event.expectedKeys.isEmpty
+            ? ["T:C"]
+            : Array(event.expectedKeys)
+
+        for key in keys.prefix(2) {
+            let feedback = MaimaiHitFeedback(
+                sensorKey: key,
+                label: label,
+                grade: grade
+            )
+
+            withAnimation(.easeOut(duration: 0.12)) {
+                feedbackPulses.append(feedback)
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.38) {
+                withAnimation(.easeIn(duration: 0.12)) {
+                    feedbackPulses.removeAll { $0.id == feedback.id }
+                }
+            }
+        }
     }
 
     private func timingName(_ error: Double) -> String {
@@ -996,7 +1485,13 @@ struct MaimaiPlaytestView: View {
     private func holdRemainingFraction(_ event: MaimaiPreviewEvent) -> Double {
         guard event.holdDuration > 0 else { return 0 }
         if elapsed <= event.time { return 1 }
-        return max(0, min(1, 1 - (elapsed - event.time) / event.holdDuration))
+        return max(
+            0,
+            min(
+                1,
+                1 - (elapsed - event.time) / event.holdDuration
+            )
+        )
     }
 
     private func holdRemainingSeconds(_ event: MaimaiPreviewEvent) -> Double {
@@ -1017,7 +1512,10 @@ struct MaimaiPlaytestView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
-        .background(Color.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 10))
+        .background(
+            Color.white.opacity(0.75),
+            in: RoundedRectangle(cornerRadius: 10)
+        )
     }
 
     private func play() {
@@ -1027,8 +1525,7 @@ struct MaimaiPlaytestView: View {
                 try session.setCategory(.playback, mode: .default)
                 try session.setActive(true)
             } catch {
-                // Visual/manual play remains available if the session cannot
-                // be changed by the sideloaded environment.
+                // Manual play remains available if session activation fails.
             }
 
             if player == nil {
@@ -1064,9 +1561,30 @@ struct MaimaiPlaytestView: View {
         missedIDs.removeAll()
         partHits.removeAll()
         partErrors.removeAll()
+        firstTimingDelta.removeAll()
+        feedbackPulses.removeAll()
         score = 0
         combo = 0
         bestCombo = 0
         lastJudgment = "READY"
+    }
+
+    private func hapticHit(_ grade: String) {
+        let style: UIImpactFeedbackGenerator.FeedbackStyle
+        switch grade {
+        case "PERFECT": style = .rigid
+        case "GREAT": style = .medium
+        default: style = .light
+        }
+
+        let generator = UIImpactFeedbackGenerator(style: style)
+        generator.prepare()
+        generator.impactOccurred()
+    }
+
+    private func hapticMiss() {
+        let generator = UINotificationFeedbackGenerator()
+        generator.prepare()
+        generator.notificationOccurred(.error)
     }
 }
