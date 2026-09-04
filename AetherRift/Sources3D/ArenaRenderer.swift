@@ -31,7 +31,7 @@ final class ArenaRenderer {
     func cylinder(_ r:CGFloat,_ h:CGFloat,_ color:UIColor,_ p:SCNVector3,_ parent:SCNNode,glow:Bool=false)->SCNNode {let g=SCNCylinder(radius:r,height:h);g.radialSegmentCount=16;return mesh(g,color,p,parent,glow:glow)}
     func ring(_ radius:Double,color:UIColor,parent:SCNNode,height:Float=0.04)->SCNNode {let g=SCNTorus(ringRadius:CGFloat(radius),pipeRadius:0.035);g.ringSegmentCount=48;g.pipeSegmentCount=4;return mesh(g,color,SCNVector3(0,height,0),parent,glow:true)}
     func line(_ a:V2,_ b:V2,width:Double,color:UIColor,parent:SCNNode,height:Float=0.015)->SCNNode {
-        let d=b-a;let n=box(CGFloat(width),0.025,CGFloat(d.length),color,SCNVector3(Float((a.x+b.x)/2),height,Float(-(a.y+b.y)/2)),parent,bevel:0);n.eulerAngles.y=Float(atan2(d.x,d.y));return n
+        let d=b-a;let n=box(CGFloat(width),0.025,CGFloat(d.length),color,SCNVector3(Float((a.x+b.x)/2),height,Float(-(a.y+b.y)/2)),parent,bevel:0);n.eulerAngles.y=Float(atan2(d.x,-d.y));return n
     }
     func terrainTexture()->UIImage {
         let size=CGSize(width:512,height:512);return UIGraphicsImageRenderer(size:size).image{ctx in
@@ -44,7 +44,7 @@ final class ArenaRenderer {
         let staticWorld=SCNNode()
         for path in Battlefield.lanes {for (a,b) in zip(path,path.dropFirst()) {
             _=line(a,b,width:5.8,color:UIColor(rgb:0x65715B),parent:staticWorld)
-            let len=a.distance(b);let count=max(1,Int(len/2));for i in 0..<count {let p=a+(b-a)*(Double(i)/Double(count));let tile=box(1.6,0.03,1.1,UIColor(rgb:i%3==0 ? 0x879082:0x788674),SCNVector3(Float(p.x),0.03,Float(-p.y)),staticWorld,bevel:0.1);tile.eulerAngles.y=Float(atan2(b.x-a.x,b.y-a.y));tile.opacity=0.65}
+            let len=a.distance(b);let count=max(1,Int(len/2));for i in 0..<count {let p=a+(b-a)*(Double(i)/Double(count));let tile=box(1.6,0.03,1.1,UIColor(rgb:i%3==0 ? 0x879082:0x788674),SCNVector3(Float(p.x),0.03,Float(-p.y)),staticWorld,bevel:0.1);tile.eulerAngles.y=Float(atan2(b.x-a.x,-(b.y-a.y)));tile.opacity=0.65}
         }}
         // A river cuts diagonally through the jungle; shallow stone crossings meet each lane.
         let river=line(V2(7,93),V2(93,7),width:7,color:UIColor(rgb:0x327E88),parent:staticWorld,height:0.055);river.geometry?.firstMaterial?.roughness.contents=0.22;river.geometry?.firstMaterial?.metalness.contents=0.30
