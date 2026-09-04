@@ -86,7 +86,7 @@ struct MaimaiTouchInputSurface: UIViewRepresentable {
             let radius = max(1, min(bounds.width, bounds.height) * 0.5)
             let normalized = distance / radius
 
-            if normalized < 0.22 {
+            if normalized < 0.20 {
                 return .touch("C")
             }
 
@@ -95,15 +95,23 @@ struct MaimaiTouchInputSurface: UIViewRepresentable {
             let sector = Int((normalizedAngle / (.pi / 4)).rounded()) % 8
             let lane = sector + 1
 
-            if normalized >= 0.72 {
-                return .lane(lane)
-            }
-
-            if normalized < 0.46 {
+            // Approximate the maimai DX sensor surface as radial touch bands.
+            // The generated charts currently favor B/E, but A/D are accepted
+            // too so imported/custom simai remains manually playable.
+            if normalized < 0.37 {
                 return .touch("B\(lane)")
             }
+            if normalized < 0.50 {
+                return .touch("E\(lane)")
+            }
+            if normalized < 0.62 {
+                return .touch("D\(lane)")
+            }
+            if normalized < 0.76 {
+                return .touch("A\(lane)")
+            }
 
-            return .touch("E\(lane)")
+            return .lane(lane)
         }
     }
 }
