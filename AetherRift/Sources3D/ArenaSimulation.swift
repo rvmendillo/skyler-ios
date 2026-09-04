@@ -28,7 +28,7 @@ final class ArenaUnit: Identifiable {
 }
 struct ArenaEvent:Identifiable {let id:Int;let text:String;let team:Int;let time:Double}
 struct CombatFX:Identifiable {let id:Int;let kind:String;let a:V2;let b:V2;let team:Int;let value:Double;var ttl:Double;var duration:Double}
-struct Missile {let source:Int;var p:V2;let direction:V2;var distance:Double;let speed:Double;let width:Double;let damage:Double;let magic:Bool;let root:Bool;var hit:Set<Int>=[];let homing:Int?}
+struct Missile {let source:Int;var p:V2;let direction:V2;var distance:Double;let speed:Double;let width:Double;let damage:Double;let magic:Bool;let root:Bool;var hit:Set<Int>=[];var hook:Bool=false;let homing:Int?}
 struct DelayedBlast {let source:Int;let point:V2;var delay:Double;let power:Double}
 
 final class ArenaSimulation {
@@ -138,8 +138,7 @@ final class ArenaSimulation {
         if u.id==playerID {sound(index==2 ? "ultimate":"skill")}
         switch spec.kind {
         case .bolt,.pull:
-            missiles.append(Missile(source:u.id,p:u.p,direction:dir,distance:spec.range,speed:24,width:spec.kind == .pull ? 0.8:1.1,damage:power,magic:magic,root:u.def.role == .support,homing:nil));fx(spec.kind == .pull ? "hook":"cast",u.p,u.p+dir*spec.range,u.team,spec.kind == .pull ? 1:0,0.3)
-            if spec.kind == .pull,let t=nearest,pointDistance(t.p,u.p,u.p+dir*spec.range)<1.7 {t.p=u.p+dir*2;t.stun=t.immunity>0 ? 0:1}
+            missiles.append(Missile(source:u.id,p:u.p,direction:dir,distance:spec.range,speed:24,width:spec.kind == .pull ? 0.8:1.1,damage:power,magic:magic,root:u.def.role == .support,hook:spec.kind == .pull,homing:nil));fx(spec.kind == .pull ? "hook":"cast",u.p,u.p+dir*spec.range,u.team,spec.kind == .pull ? 1:0,0.3)
         case .cleave:
             for t in enemies(of:u,range:spec.range) where !t.structure && (t.p-u.p).normalized.dot(dir)>0.25{damage(t,amount:power,source:u,magic:magic);t.slow=1.8};fx("cone",u.p,u.p+dir*spec.range,u.team,spec.range,0.4)
         case .dash:
@@ -305,7 +304,7 @@ final class ArenaSimulation {
             let previous=m.p;m.p=m.p+direction*m.speed*dt;m.distance-=m.speed*dt
             var consumed=false
             for t in units where t.alive && t.team != s.team && !m.hit.contains(t.id) && (m.homing == nil ? !t.structure:t.id==m.homing) {
-                if pointDistance(t.p,previous,m.p)<m.width+(t.structure ? 1.2:0.6) {damage(t,amount:m.damage,source:s,magic:m.magic);if m.root && t.immunity<=0{t.stun=1};if s.def.id==9{t.slow=1.8};m.hit.insert(t.id);if m.homing != nil {consumed=true;break}}
+                if pointDistance(t.p,previous,m.p)<m.width+(t.structure ? 1.2:0.6) {damage(t,amount:m.damage,source:s,magic:m.magic);if m.root && t.immunity<=0{t.stun=1};if s.def.id==9{t.slow=1.8};m.hit.insert(t.id);if m.hook {t.p=Battlefield.clamp(s.p+(t.p-s.p).normalized*2);if t.immunity<=0{t.stun=1}};if m.homing != nil || m.hook {consumed=true;break}}
             }
             fx("projectile",previous,m.p,s.team,m.magic ? 1:0,0.10)
             if m.distance>0 && !consumed{next.append(m)}

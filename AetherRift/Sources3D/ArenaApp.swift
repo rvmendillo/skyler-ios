@@ -6,7 +6,7 @@ import UIKit
 @MainActor final class BattleSession:NSObject,ObservableObject {
     let game:ArenaSimulation;let renderer=ArenaRenderer();@Published var revision=0;@Published var finished=false;var display:CADisplayLink?;var lastTime:CFTimeInterval=0;var hudTime:Double=0;var recorded=false
     init(hero:Int,difficulty:Difficulty,spell:BattleSpell,practice:Bool){game=ArenaSimulation(hero:hero,difficulty:difficulty,spell:spell,practice:practice);super.init();renderer.cameraPoint=game.player.p
-        if ProcessInfo.processInfo.arguments.contains("--smoke-battle") {game.player.p=V2(46,46);game.player.hp=game.player.maxHP;game.spawnWave();for h in game.heroes where h.id != game.playerID {h.p=h.team==0 ? V2(43+Double(h.id%3),44+Double(h.id%3)):V2(52+Double(h.id%3),51+Double(h.id%3));game.gain(h,xp:1800,gold:2000)}}
+        if ProcessInfo.processInfo.arguments.contains("--smoke-battle") {game.player.p=V2(42,42);game.player.hp=game.player.maxHP;game.spawnWave();for h in game.heroes where h.id != game.playerID {h.p=h.team==0 ? V2(43+Double(h.id%3),44+Double(h.id%3)):V2(52+Double(h.id%3),51+Double(h.id%3));game.gain(h,xp:1800,gold:2000)}}
     }
     func start(){guard display==nil else{return};UIApplication.shared.isIdleTimerDisabled=true;lastTime=0;let link=CADisplayLink(target:self,selector:#selector(frame(_:)));link.preferredFramesPerSecond=60;link.add(to:.main,forMode:.common);display=link;ArenaAudio.shared.start()}
     func stop(){display?.invalidate();display=nil;UIApplication.shared.isIdleTimerDisabled=false;ArenaAudio.shared.stop()}
@@ -41,7 +41,7 @@ struct ArenaRoot:View {
                     HStack(spacing:0){
                         VStack(alignment:.leading,spacing:14){
                             Text("REY VICTOR MENDILLO").font(.system(size:8,weight:.semibold)).tracking(3).foregroundColor(gold)
-                            Text("AETHER\nRIFT").font(.system(size:32,weight:.black,design:.serif)).tracking(4).lineSpacing(-2)
+                            Text("AETHER RIFT").font(.system(size:27,weight:.black,design:.serif)).tracking(4).lineSpacing(-2)
                             Text("CHOOSE YOUR CHAMPION").font(.system(size:9,weight:.bold)).tracking(1.5).foregroundColor(.white.opacity(0.55))
                             HStack(spacing:5){roleChip(nil);ForEach(Role.allCases,id:\.self){roleChip($0)}}
                             ScrollView {LazyVGrid(columns:[GridItem(.fixed(95)),GridItem(.fixed(95)),GridItem(.fixed(95))],spacing:7){ForEach(Roster.heroes.filter{role == nil || $0.role==role}){h in Button{hero=h.id;ArenaAudio.shared.play("select")}label:{VStack(spacing:4){Image(systemName:h.role.icon).font(.system(size:20)).foregroundColor(Color(UIColor(rgb:h.color)));Text(h.name).font(.system(size:11,weight:.bold));Text(h.role.rawValue).font(.system(size:8)).foregroundColor(.white.opacity(0.5))}.frame(width:92,height:64).background(hero==h.id ? Color(UIColor(rgb:h.color)).opacity(0.18):.white.opacity(0.035),in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).stroke(hero==h.id ? gold:.white.opacity(0.10),lineWidth:1))}.buttonStyle(.plain).accessibilityIdentifier("hero-\(h.id)")}}}.frame(height:216)

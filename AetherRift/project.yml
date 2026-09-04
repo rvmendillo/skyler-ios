@@ -26,6 +26,8 @@ targets:
       path: Generated/Info.plist
       properties:
         CFBundleDisplayName: Aether Rift
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UILaunchScreen: {}

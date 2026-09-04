@@ -13,8 +13,8 @@ final class ArenaRenderer {
         scene.rootNode.addChildNode(world);scene.rootNode.addChildNode(actors);scene.rootNode.addChildNode(fxRoot);scene.rootNode.addChildNode(aimRoot)
         scene.background.contents=UIColor(rgb:0x192E35);scene.fogColor=UIColor(rgb:0x405D58);scene.fogStartDistance=62;scene.fogEndDistance=125
         camera.camera=SCNCamera();camera.camera?.fieldOfView=48;camera.camera?.zNear=0.3;camera.camera?.zFar=180;camera.camera?.wantsHDR=true;camera.camera?.bloomIntensity=0.18;camera.camera?.bloomThreshold=1;camera.camera?.exposureOffset=0.1;scene.rootNode.addChildNode(camera)
-        ambient.light=SCNLight();ambient.light?.type = .ambient;ambient.light?.color=UIColor(rgb:0xA4C6D3);ambient.light?.intensity=650;scene.rootNode.addChildNode(ambient)
-        sun.light=SCNLight();sun.light?.type = .directional;sun.light?.color=UIColor(rgb:0xFFE4BE);sun.light?.intensity=1400;sun.light?.castsShadow=true;sun.light?.shadowMode = .deferred;sun.light?.shadowColor=UIColor.black.withAlphaComponent(0.35);sun.light?.shadowMapSize=CGSize(width:2048,height:2048);sun.light?.orthographicScale=60;sun.light?.maximumShadowDistance=70;sun.eulerAngles=SCNVector3(-Float.pi/3,-Float.pi/5,0);scene.rootNode.addChildNode(sun)
+        ambient.light=SCNLight();ambient.light?.type = .ambient;ambient.light?.color=UIColor(rgb:0xA4C6D3);ambient.light?.intensity=420;scene.rootNode.addChildNode(ambient)
+        sun.light=SCNLight();sun.light?.type = .directional;sun.light?.color=UIColor(rgb:0xFFE4BE);sun.light?.intensity=1150;sun.light?.castsShadow=true;sun.light?.shadowMode = .deferred;sun.light?.shadowColor=UIColor.black.withAlphaComponent(0.35);sun.light?.shadowMapSize=CGSize(width:2048,height:2048);sun.light?.orthographicScale=60;sun.light?.maximumShadowDistance=70;sun.eulerAngles=SCNVector3(-Float.pi/3,-Float.pi/5,0);scene.rootNode.addChildNode(sun)
         buildTerrain();pet=makePet();actors.addChildNode(pet)
     }
     func material(_ color:UIColor,metal:CGFloat=0,rough:CGFloat=0.8,glow:Bool=false)->SCNMaterial {
@@ -93,12 +93,16 @@ final class ArenaRenderer {
         // A sculpted cloth panel, made from triangles, forms the cape behind each hero.
         let verts:[SCNVector3]=[SCNVector3(-Float(width)/2,1.57,-0.20),SCNVector3(Float(width)/2,1.57,-0.20),SCNVector3(-Float(width)*0.8,0.28,-0.52),SCNVector3(0,0.20,-0.67),SCNVector3(Float(width)*0.8,0.28,-0.52)]
         let element=SCNGeometryElement(indices:[Int32(0),1,3,0,3,2,1,4,3],primitiveType:.triangles);let cape=SCNGeometry(sources:[SCNGeometrySource(vertices:verts)],elements:[element]);cape.materials=[material(cloth)];cape.firstMaterial?.isDoubleSided=true;let capenode=SCNNode(geometry:cape);capenode.name="cape";body.addChildNode(capenode)
-        let head=SCNNode();head.position=SCNVector3(0,1.87,0);body.addChildNode(head)
+        _=cylinder(0.085,0.22,skin,SCNVector3(0,1.69,0),body)
+        let head=SCNNode();head.position=SCNVector3(0,1.89,0);head.scale=SCNVector3(0.75,0.83,0.80);body.addChildNode(head)
         _=sphere(0.25,skin,SCNVector3Zero,head,scale:SCNVector3(0.82,1,0.87))
         let hairColor=UIColor(rgb:def.id%3==0 ? 0xDEDAC8:def.id%3==1 ? 0x593B32:0x323047)
         _=sphere(0.255,heavy ? steel:hairColor,SCNVector3(0,0.12,-0.035),head,scale:SCNVector3(0.92,0.70,1))
+        _=sphere(0.035,skin,SCNVector3(0,-0.025,0.222),head,scale:SCNVector3(0.65,1.3,1))
+        _=box(0.07,0.008,0.01,UIColor(rgb:0x916354),SCNVector3(0,-0.10,0.195),head,bevel:0)
         for side in [-1.0,1.0] {
-            _=sphere(0.025,UIColor(rgb:0x16202A),SCNVector3(Float(side)*0.085,0.015,0.205),head,scale:SCNVector3(1.3,0.8,0.55))
+            _=box(0.07,0.016,0.015,hairColor,SCNVector3(Float(side)*0.085,0.065,0.204),head,bevel:0.003)
+            _=sphere(0.018,UIColor(rgb:0x16202A),SCNVector3(Float(side)*0.085,0.015,0.205),head,scale:SCNVector3(1.3,0.8,0.55))
             _=sphere(0.03,skin,SCNVector3(Float(side)*0.205,-0.005,0),head,scale:SCNVector3(1,1.6,0.65))
             let arm=SCNNode();arm.name=side<0 ? "armL":"armR";arm.position=SCNVector3(Float(side)*Float(width)*0.64,1.46,0);body.addChildNode(arm)
             _=sphere(heavy ? 0.27:0.19,heavy ? steel:cloth,SCNVector3Zero,arm,scale:SCNVector3(1.1,0.85,1))
@@ -172,7 +176,7 @@ final class ArenaRenderer {
             if u.shield>0 {if shield==nil {let s=sphere(1.1,Self.blue.withAlphaComponent(0.15),SCNVector3(0,1.15,0),n,scale:SCNVector3(1,1.25,1),glow:true);s.name="shieldBubble";s.geometry?.firstMaterial?.transparency=0.20}}else{shield?.removeFromParentNode()}
             if u.id==game.playerID {n.opacity=u.conceal>0 || Battlefield.inBrush(u.p) != nil ? 0.62:1}
         }
-        let target=panPoint ?? game.player.p;cameraPoint=cameraPoint+(target-cameraPoint)*min(1,dt*8)
+        let desired=panPoint ?? game.player.p;let target=V2(max(29,min(71,desired.x)),max(22,min(78,desired.y)));cameraPoint=cameraPoint+(target-cameraPoint)*min(1,dt*8)
         camera.position=SCNVector3(Float(cameraPoint.x),30,Float(-cameraPoint.y)+23);camera.look(at:SCNVector3(Float(cameraPoint.x),0,Float(-cameraPoint.y)))
         pet.isHidden = !game.player.alive;let petTarget=game.player.p+V2(-1.5,-1.6);pet.position=SCNVector3(Float(petTarget.x),Float(sin(game.time*5))*0.05,Float(-petTarget.y));pet.eulerAngles.y=Float(atan2(game.player.facing.x,-game.player.facing.y))
         updateEffects(game);updateAim(game)

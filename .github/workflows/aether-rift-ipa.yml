@@ -33,10 +33,11 @@ jobs:
         run: |
           set -o pipefail
           DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import sys,json; d=json.load(sys.stdin); a=[x for group in d["devices"].values() for x in group if "iPhone" in x["name"]]; p=next((x for x in a if x["name"]=="iPhone 16 Plus"),a[0]); print(p["udid"])')
-          xcodebuild -project AetherRift/AetherRift.xcodeproj -scheme AetherRift -configuration Debug -destination "platform=iOS Simulator,id=$DEVICE" -derivedDataPath "$PWD/simbuild" -resultBundlePath "$PWD/SimulatorTests.xcresult" CODE_SIGNING_ALLOWED=NO test > simulator.log 2>&1 || { tail -100 simulator.log; exit 1; }
+          xcodebuild -project AetherRift/AetherRift.xcodeproj -scheme AetherRift -configuration Release -parallel-testing-enabled NO -test-timeouts-enabled YES -maximum-test-execution-time-allowance 120 -destination "platform=iOS Simulator,id=$DEVICE" -derivedDataPath "$PWD/simbuild" -resultBundlePath "$PWD/SimulatorTests.xcresult" CODE_SIGNING_ALLOWED=NO test > simulator.log 2>&1 || { tail -100 simulator.log; exit 1; }
           xcrun simctl boot "$DEVICE" || true
           xcrun simctl bootstatus "$DEVICE" -b
-          xcrun simctl install "$DEVICE" simbuild/Build/Products/Debug-iphonesimulator/AetherRift.app
+          xcrun simctl install "$DEVICE" simbuild/Build/Products/Release-iphonesimulator/AetherRift.app
+          xcrun simctl terminate "$DEVICE" com.rvmendillo.AetherRift || true
           xcrun simctl launch "$DEVICE" com.rvmendillo.AetherRift --smoke-battle
           sleep 5
           xcrun simctl io "$DEVICE" screenshot AetherRift-Battle.png
@@ -44,6 +45,7 @@ jobs:
           xcrun simctl launch "$DEVICE" com.rvmendillo.AetherRift
           sleep 3
           xcrun simctl io "$DEVICE" screenshot AetherRift-Heroes.png
+          sips -r -90 AetherRift-Battle.png AetherRift-Heroes.png >/dev/null
       - name: Upload playable build and previews
         uses: actions/upload-artifact@v4
         with:

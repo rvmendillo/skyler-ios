@@ -26,6 +26,12 @@ p.p=victim.p+V2(1,0);check(g.visible(victim,to:0),"nearby brush enemy revealed")
 let low=ArenaSimulation(hero:3);low.cast(2,by:low.player);check(low.player.cooldowns[2]==0,"ultimate locked at level 1")
 let summon=ArenaSimulation(hero:0);let boss=summon.units.first{$0.kind == .colossus}!;boss.hp=1;boss.respawn=0;summon.damage(boss,amount:200,source:summon.player,magic:false,trueDamage:true);check(summon.units.contains{$0.kind == .summoned && $0.team==0},"Colossus sends a siege monster")
 for h in Roster.heroes{let match=ArenaSimulation(hero:h.id,practice:true);match.autoLearn(match.player);for i in 0...2{match.player.cooldowns[i]=0;match.cast(i,by:match.player,direction:V2(1,1))};for _ in 0..<40{match.step(0.05)};check(match.player.hp.isFinite,"\(h.name) abilities remain finite")}
+let hookMatch=ArenaSimulation(hero:6)
+let hookTarget=hookMatch.heroes.first{$0.team==1}!
+hookMatch.player.p=V2(48,48);hookTarget.p=V2(48,56);hookTarget.stun=5
+hookMatch.cast(0,by:hookMatch.player,direction:V2(0,1))
+for _ in 0..<10 {hookMatch.updateMissiles(0.05)}
+check(hookTarget.p.distance(hookMatch.player.p)<2.1,"hook pulls only after projectile contact")
 let soak=ArenaSimulation(hero:1,difficulty:.veteran);soak.autoplay=true
 for _ in 0..<18000 {soak.step(0.05);if soak.winner != nil{break}}
 check(soak.units.allSatisfy{$0.p.x.isFinite && $0.p.y.isFinite && $0.hp.isFinite},"long match remains finite")
