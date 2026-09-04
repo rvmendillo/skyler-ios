@@ -1,84 +1,142 @@
 import SpriteKit
 import Foundation
 
+private enum Lane: CaseIterable {
+    case top, mid, bottom
+
+    var y: CGFloat {
+        switch self {
+        case .top: return 1460
+        case .mid: return 900
+        case .bottom: return 340
+        }
+    }
+}
+
 private final class LaneMinion {
     let node: SKShapeNode
     let team: Int
-    var hp: CGFloat = 220
+    let lane: Lane
+    var hp: CGFloat = 250
     var nextAttack: TimeInterval = 0
+    var waypointIndex = 0
 
-    init(team: Int, position: CGPoint) {
+    init(team: Int, lane: Lane, position: CGPoint) {
         self.team = team
-        node = SKShapeNode(circleOfRadius: 13)
+        self.lane = lane
+        node = SKShapeNode(circleOfRadius: 15)
         node.fillColor = team == 0 ? .systemTeal : .systemRed
-        node.strokeColor = .white.withAlphaComponent(0.45)
-        node.lineWidth = 1
+        node.strokeColor = .white.withAlphaComponent(0.55)
+        node.lineWidth = 1.5
         node.position = position
-        node.zPosition = 3
+        node.zPosition = 6
     }
 }
 
 private final class TowerUnit {
     let node: SKShapeNode
     let team: Int
-    let maxHP: CGFloat = 1700
-    var hp: CGFloat = 1700
+    let lane: Lane?
+    let tier: Int
+    let maxHP: CGFloat
+    var hp: CGFloat
     var nextAttack: TimeInterval = 0
 
-    init(team: Int, position: CGPoint) {
+    init(team: Int, lane: Lane?, tier: Int, position: CGPoint) {
         self.team = team
-        node = SKShapeNode(rectOf: CGSize(width: 52, height: 82), cornerRadius: 12)
+        self.lane = lane
+        self.tier = tier
+        self.maxHP = tier == 0 ? 3600 : (1900 + CGFloat(3 - tier) * 220)
+        self.hp = maxHP
+        node = SKShapeNode(rectOf: CGSize(width: tier == 0 ? 82 : 56, height: tier == 0 ? 82 : 90), cornerRadius: 14)
         node.fillColor = team == 0 ? .systemCyan : .systemPink
-        node.strokeColor = .white.withAlphaComponent(0.5)
+        node.strokeColor = .white.withAlphaComponent(0.65)
         node.lineWidth = 2
         node.position = position
-        node.zPosition = 4
+        node.zPosition = 7
+    }
+}
+
+private final class BotHero {
+    let node = SKShapeNode(circleOfRadius: 24)
+    let team: Int
+    let lane: Lane
+    let maxHP: CGFloat = 1180
+    var hp: CGFloat = 1180
+    var nextAttack: TimeInterval = 0
+    var respawnAt: TimeInterval?
+
+    init(team: Int, lane: Lane, position: CGPoint, index: Int) {
+        self.team = team
+        self.lane = lane
+        node.fillColor = team == 0 ? .systemBlue : .systemRed
+        node.strokeColor = .white
+        node.lineWidth = 2
+        node.position = position
+        node.zPosition = 10
+
+        let core = SKShapeNode(circleOfRadius: 8)
+        core.fillColor = index % 2 == 0 ? .white : .systemYellow
+        core.strokeColor = .clear
+        node.addChild(core)
+    }
+}
+
+private final class JungleCamp {
+    let node = SKShapeNode(circleOfRadius: 27)
+    var hp: CGFloat = 900
+    let maxHP: CGFloat = 900
+    var respawnAt: TimeInterval?
+
+    init(position: CGPoint, elite: Bool) {
+        node.position = position
+        node.fillColor = elite ? .systemPurple : .systemGreen
+        node.strokeColor = .white.withAlphaComponent(0.5)
+        node.lineWidth = 2
+        node.zPosition = 5
     }
 }
 
 final class GameScene: SKScene {
     private let heroClass: HeroClass
 
-    private let player = SKShapeNode(circleOfRadius: 26)
-    private let enemyHero = SKShapeNode(circleOfRadius: 27)
-    private var allyTower: TowerUnit!
-    private var enemyTower: TowerUnit!
+    private let worldWidth: CGFloat = 3000
+    private let worldHeight: CGFloat = 1800
+    private let worldRoot = SKNode()
+    private let gameCamera = SKCameraNode()
+
+    private let player = SKShapeNode(circleOfRadius: 27)
     private var minions: [LaneMinion] = []
+    private var towers: [TowerUnit] = []
+    private var bots: [BotHero] = []
+    private var jungleCamps: [JungleCamp] = []
 
     private var movement = CGVector.zero
     private var lastFrameTime: TimeInterval = 0
     private var lastWaveTime: TimeInterval = -99
     private var lastAttackTime: TimeInterval = -99
-    private var enemyLastAttackTime: TimeInterval = -99
     private var skillLastUsed: [Int: TimeInterval] = [:]
-    private var enemyStunnedUntil: TimeInterval = 0
-    private var attackBuffUntil: TimeInterval = 0
-    private var veilUntil: TimeInterval = 0
     private var playerRespawnAt: TimeInterval?
-    private var enemyRespawnAt: TimeInterval?
-    private var gameOver = false
-
     private var playerHP: CGFloat = 1
     private var playerMana: CGFloat = 1
     private var shieldHP: CGFloat = 0
-    private var enemyHP: CGFloat = 1250
-    private let enemyMaxHP: CGFloat = 1250
+    private var attackBuffUntil: TimeInterval = 0
+    private var stealthUntil: TimeInterval = 0
     private var blueKills = 0
     private var redKills = 0
+    private var gameOver = false
 
-    private let playerHPBar = SKSpriteNode(color: .systemGreen, size: CGSize(width: 260, height: 12))
-    private let playerManaBar = SKSpriteNode(color: .systemBlue, size: CGSize(width: 260, height: 8))
-    private let enemyHPBar = SKSpriteNode(color: .systemRed, size: CGSize(width: 260, height: 12))
-    private let statusLabel = SKLabelNode(fontNamed: "AvenirNext-Bold")
+    private let hpBar = SKSpriteNode(color: .systemGreen, size: CGSize(width: 210, height: 11))
+    private let manaBar = SKSpriteNode(color: .systemBlue, size: CGSize(width: 210, height: 7))
     private let scoreLabel = SKLabelNode(fontNamed: "AvenirNext-Bold")
-    private let messageLabel = SKLabelNode(fontNamed: "AvenirNext-DemiBold")
-    private let towerLabel = SKLabelNode(fontNamed: "AvenirNext-Medium")
-    private var messageToken = 0
+    private let laneLabel = SKLabelNode(fontNamed: "AvenirNext-DemiBold")
+    private let messageLabel = SKLabelNode(fontNamed: "AvenirNext-Bold")
 
     init(size: CGSize, heroClass: HeroClass) {
         self.heroClass = heroClass
         super.init(size: size)
-        backgroundColor = SKColor(red: 0.035, green: 0.075, blue: 0.075, alpha: 1)
+        scaleMode = .aspectFill
+        backgroundColor = .black
         anchorPoint = .zero
     }
 
@@ -93,161 +151,259 @@ final class GameScene: SKScene {
     func restartMatch() {
         removeAllActions()
         removeAllChildren()
+        worldRoot.removeAllChildren()
         minions.removeAll()
+        towers.removeAll()
+        bots.removeAll()
+        jungleCamps.removeAll()
         movement = .zero
         lastFrameTime = 0
         lastWaveTime = -99
         lastAttackTime = -99
-        enemyLastAttackTime = -99
         skillLastUsed.removeAll()
-        enemyStunnedUntil = 0
-        attackBuffUntil = 0
-        veilUntil = 0
         playerRespawnAt = nil
-        enemyRespawnAt = nil
-        gameOver = false
-        blueKills = 0
-        redKills = 0
         playerHP = heroClass.maxHP
         playerMana = heroClass.maxMana
         shieldHP = 0
-        enemyHP = enemyMaxHP
+        attackBuffUntil = 0
+        stealthUntil = 0
+        blueKills = 0
+        redKills = 0
+        gameOver = false
 
+        addChild(worldRoot)
         setupMap()
-        setupUnits()
-        setupHUD()
+        setupStructures()
+        setupPlayer()
+        setupBots()
+        setupJungle()
+        setupCameraHUD()
         spawnWave()
     }
 
     private func setupMap() {
-        let ground = SKSpriteNode(color: SKColor(red: 0.05, green: 0.16, blue: 0.12, alpha: 1), size: size)
+        let ground = SKSpriteNode(color: SKColor(red: 0.045, green: 0.16, blue: 0.10, alpha: 1), size: CGSize(width: worldWidth, height: worldHeight))
         ground.anchorPoint = .zero
         ground.position = .zero
-        ground.zPosition = -10
-        addChild(ground)
+        ground.zPosition = -20
+        worldRoot.addChild(ground)
 
-        let lane = SKShapeNode(rectOf: CGSize(width: size.width - 120, height: 185), cornerRadius: 60)
-        lane.fillColor = SKColor(red: 0.17, green: 0.20, blue: 0.17, alpha: 1)
-        lane.strokeColor = .white.withAlphaComponent(0.07)
-        lane.lineWidth = 4
-        lane.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        lane.zPosition = -7
-        addChild(lane)
+        let river = SKShapeNode(rectOf: CGSize(width: 175, height: worldHeight + 100), cornerRadius: 50)
+        river.position = CGPoint(x: worldWidth / 2, y: worldHeight / 2)
+        river.fillColor = SKColor(red: 0.05, green: 0.32, blue: 0.42, alpha: 0.82)
+        river.strokeColor = .white.withAlphaComponent(0.06)
+        river.lineWidth = 4
+        river.zPosition = -15
+        worldRoot.addChild(river)
 
-        let river = SKShapeNode(rectOf: CGSize(width: 90, height: size.height + 100))
-        river.fillColor = SKColor(red: 0.06, green: 0.28, blue: 0.34, alpha: 0.7)
-        river.strokeColor = .clear
-        river.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        river.zPosition = -6
-        addChild(river)
+        for lane in Lane.allCases {
+            let path = CGMutablePath()
+            let points = lanePoints(lane)
+            path.move(to: points[0])
+            for p in points.dropFirst() { path.addLine(to: p) }
 
-        for x in stride(from: CGFloat(300), through: size.width - 300, by: 170) {
-            for y in [CGFloat(125), size.height - 125] {
-                let bush = SKShapeNode(circleOfRadius: 34)
-                bush.fillColor = SKColor(red: 0.07, green: 0.28, blue: 0.10, alpha: 0.85)
+            let laneNode = SKShapeNode(path: path)
+            laneNode.lineWidth = 145
+            laneNode.strokeColor = SKColor(red: 0.22, green: 0.23, blue: 0.18, alpha: 1)
+            laneNode.lineCap = .round
+            laneNode.lineJoin = .round
+            laneNode.zPosition = -12
+            worldRoot.addChild(laneNode)
+
+            let edge = SKShapeNode(path: path)
+            edge.lineWidth = 151
+            edge.strokeColor = .white.withAlphaComponent(0.05)
+            edge.lineCap = .round
+            edge.lineJoin = .round
+            edge.zPosition = -13
+            worldRoot.addChild(edge)
+        }
+
+        for x in stride(from: CGFloat(520), through: worldWidth - 520, by: 300) {
+            for y in [CGFloat(610), CGFloat(1180)] {
+                let bush = SKShapeNode(ellipseOf: CGSize(width: 110, height: 75))
+                bush.fillColor = SKColor(red: 0.04, green: 0.27, blue: 0.08, alpha: 0.95)
                 bush.strokeColor = .clear
-                bush.position = CGPoint(x: x, y: y)
-                bush.zPosition = -4
-                addChild(bush)
+                bush.position = CGPoint(x: x + (Int(x) % 2 == 0 ? 40 : -40), y: y)
+                bush.zPosition = -5
+                worldRoot.addChild(bush)
             }
         }
 
-        let centerMark = SKShapeNode(circleOfRadius: 56)
-        centerMark.fillColor = .clear
-        centerMark.strokeColor = .white.withAlphaComponent(0.10)
-        centerMark.lineWidth = 3
-        centerMark.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        centerMark.zPosition = -3
-        addChild(centerMark)
+        for p in [CGPoint(x: 1180, y: 900), CGPoint(x: 1820, y: 900), CGPoint(x: 1500, y: 620), CGPoint(x: 1500, y: 1180)] {
+            let bridge = SKShapeNode(rectOf: CGSize(width: 160, height: 58), cornerRadius: 20)
+            bridge.fillColor = SKColor(red: 0.28, green: 0.25, blue: 0.19, alpha: 1)
+            bridge.strokeColor = .white.withAlphaComponent(0.08)
+            bridge.position = p
+            bridge.zPosition = -7
+            worldRoot.addChild(bridge)
+        }
+
+        let blueBase = SKShapeNode(circleOfRadius: 150)
+        blueBase.position = CGPoint(x: 190, y: 900)
+        blueBase.fillColor = .systemBlue.withAlphaComponent(0.18)
+        blueBase.strokeColor = .systemCyan.withAlphaComponent(0.5)
+        blueBase.lineWidth = 5
+        blueBase.zPosition = -4
+        worldRoot.addChild(blueBase)
+
+        let redBase = SKShapeNode(circleOfRadius: 150)
+        redBase.position = CGPoint(x: worldWidth - 190, y: 900)
+        redBase.fillColor = .systemRed.withAlphaComponent(0.18)
+        redBase.strokeColor = .systemPink.withAlphaComponent(0.5)
+        redBase.lineWidth = 5
+        redBase.zPosition = -4
+        worldRoot.addChild(redBase)
     }
 
-    private func setupUnits() {
-        allyTower = TowerUnit(team: 0, position: CGPoint(x: 125, y: size.height / 2))
-        enemyTower = TowerUnit(team: 1, position: CGPoint(x: size.width - 125, y: size.height / 2))
-        addChild(allyTower.node)
-        addChild(enemyTower.node)
+    private func lanePoints(_ lane: Lane) -> [CGPoint] {
+        switch lane {
+        case .top:
+            return [
+                CGPoint(x: 250, y: 900), CGPoint(x: 430, y: 1320), CGPoint(x: 780, y: 1460),
+                CGPoint(x: 1500, y: 1460), CGPoint(x: 2220, y: 1460), CGPoint(x: 2570, y: 1320), CGPoint(x: 2750, y: 900)
+            ]
+        case .mid:
+            return [CGPoint(x: 250, y: 900), CGPoint(x: 1500, y: 900), CGPoint(x: 2750, y: 900)]
+        case .bottom:
+            return [
+                CGPoint(x: 250, y: 900), CGPoint(x: 430, y: 480), CGPoint(x: 780, y: 340),
+                CGPoint(x: 1500, y: 340), CGPoint(x: 2220, y: 340), CGPoint(x: 2570, y: 480), CGPoint(x: 2750, y: 900)
+            ]
+        }
+    }
 
+    private func setupStructures() {
+        for lane in Lane.allCases {
+            let points = lanePoints(lane)
+            let bluePositions = [points[1], points[2], interpolate(points[2], points[3], 0.48)]
+            let redPositions = [points[points.count - 2], points[points.count - 3], interpolate(points[points.count - 3], points[points.count - 4], 0.48)]
+
+            for (index, p) in bluePositions.enumerated() {
+                let tower = TowerUnit(team: 0, lane: lane, tier: index + 1, position: p)
+                towers.append(tower)
+                worldRoot.addChild(tower.node)
+            }
+            for (index, p) in redPositions.enumerated() {
+                let tower = TowerUnit(team: 1, lane: lane, tier: index + 1, position: p)
+                towers.append(tower)
+                worldRoot.addChild(tower.node)
+            }
+        }
+
+        let blueCore = TowerUnit(team: 0, lane: nil, tier: 0, position: CGPoint(x: 180, y: 900))
+        let redCore = TowerUnit(team: 1, lane: nil, tier: 0, position: CGPoint(x: worldWidth - 180, y: 900))
+        towers.append(contentsOf: [blueCore, redCore])
+        worldRoot.addChild(blueCore.node)
+        worldRoot.addChild(redCore.node)
+    }
+
+    private func setupPlayer() {
+        player.removeAllChildren()
         player.fillColor = playerColor()
         player.strokeColor = .white
         player.lineWidth = 3
-        player.position = CGPoint(x: 260, y: size.height / 2)
-        player.zPosition = 8
-        addChild(player)
+        player.position = CGPoint(x: 330, y: 900)
+        player.zPosition = 15
+        player.alpha = 1
+        player.isHidden = false
+        worldRoot.addChild(player)
 
-        let playerCore = SKShapeNode(circleOfRadius: 10)
-        playerCore.fillColor = .white.withAlphaComponent(0.9)
-        playerCore.strokeColor = .clear
-        playerCore.name = "core"
-        player.addChild(playerCore)
-
-        enemyHero.fillColor = .systemRed
-        enemyHero.strokeColor = .white
-        enemyHero.lineWidth = 3
-        enemyHero.position = CGPoint(x: size.width - 260, y: size.height / 2)
-        enemyHero.zPosition = 8
-        addChild(enemyHero)
-
-        let enemyCore = SKShapeNode(circleOfRadius: 10)
-        enemyCore.fillColor = .white.withAlphaComponent(0.9)
-        enemyCore.strokeColor = .clear
-        enemyHero.addChild(enemyCore)
+        let core = SKShapeNode(circleOfRadius: 10)
+        core.fillColor = .white
+        core.strokeColor = .clear
+        player.addChild(core)
     }
 
-    private func setupHUD() {
-        let hpBack = SKSpriteNode(color: .black.withAlphaComponent(0.55), size: CGSize(width: 264, height: 16))
+    private func setupBots() {
+        let allyLanes: [Lane] = [.top, .mid, .bottom, .bottom]
+        let enemyLanes: [Lane] = [.top, .top, .mid, .bottom, .bottom]
+
+        for (i, lane) in allyLanes.enumerated() {
+            let bot = BotHero(team: 0, lane: lane, position: spawnPosition(team: 0, lane: lane, offset: CGFloat(i * 38)), index: i)
+            bots.append(bot)
+            worldRoot.addChild(bot.node)
+        }
+        for (i, lane) in enemyLanes.enumerated() {
+            let bot = BotHero(team: 1, lane: lane, position: spawnPosition(team: 1, lane: lane, offset: CGFloat(i * 38)), index: i)
+            bots.append(bot)
+            worldRoot.addChild(bot.node)
+        }
+    }
+
+    private func setupJungle() {
+        let positions: [(CGPoint, Bool)] = [
+            (CGPoint(x: 940, y: 650), false), (CGPoint(x: 1050, y: 1160), true),
+            (CGPoint(x: 1320, y: 650), false), (CGPoint(x: 1680, y: 1150), false),
+            (CGPoint(x: 1950, y: 640), true), (CGPoint(x: 2070, y: 1160), false)
+        ]
+        for item in positions {
+            let camp = JungleCamp(position: item.0, elite: item.1)
+            jungleCamps.append(camp)
+            worldRoot.addChild(camp.node)
+        }
+    }
+
+    private func setupCameraHUD() {
+        camera = gameCamera
+        addChild(gameCamera)
+        gameCamera.position = player.position
+        gameCamera.setScale(0.95)
+
+        let hpBack = SKSpriteNode(color: .black.withAlphaComponent(0.55), size: CGSize(width: 214, height: 15))
         hpBack.anchorPoint = CGPoint(x: 0, y: 0.5)
-        hpBack.position = CGPoint(x: 20, y: size.height - 30)
-        hpBack.zPosition = 30
-        addChild(hpBack)
+        hpBack.position = CGPoint(x: -440, y: 180)
+        hpBack.zPosition = 100
+        gameCamera.addChild(hpBack)
 
-        playerHPBar.anchorPoint = CGPoint(x: 0, y: 0.5)
-        playerHPBar.position = CGPoint(x: 22, y: size.height - 30)
-        playerHPBar.zPosition = 31
-        addChild(playerHPBar)
+        hpBar.anchorPoint = CGPoint(x: 0, y: 0.5)
+        hpBar.position = CGPoint(x: -438, y: 180)
+        hpBar.zPosition = 101
+        gameCamera.addChild(hpBar)
 
-        let manaBack = SKSpriteNode(color: .black.withAlphaComponent(0.55), size: CGSize(width: 264, height: 12))
+        let manaBack = SKSpriteNode(color: .black.withAlphaComponent(0.55), size: CGSize(width: 214, height: 11))
         manaBack.anchorPoint = CGPoint(x: 0, y: 0.5)
-        manaBack.position = CGPoint(x: 20, y: size.height - 48)
-        manaBack.zPosition = 30
-        addChild(manaBack)
+        manaBack.position = CGPoint(x: -440, y: 162)
+        manaBack.zPosition = 100
+        gameCamera.addChild(manaBack)
 
-        playerManaBar.anchorPoint = CGPoint(x: 0, y: 0.5)
-        playerManaBar.position = CGPoint(x: 22, y: size.height - 48)
-        playerManaBar.zPosition = 31
-        addChild(playerManaBar)
-
-        let enemyBack = SKSpriteNode(color: .black.withAlphaComponent(0.55), size: CGSize(width: 264, height: 16))
-        enemyBack.anchorPoint = CGPoint(x: 1, y: 0.5)
-        enemyBack.position = CGPoint(x: size.width - 20, y: size.height - 30)
-        enemyBack.zPosition = 30
-        addChild(enemyBack)
-
-        enemyHPBar.anchorPoint = CGPoint(x: 1, y: 0.5)
-        enemyHPBar.position = CGPoint(x: size.width - 22, y: size.height - 30)
-        enemyHPBar.zPosition = 31
-        addChild(enemyHPBar)
-
-        statusLabel.fontSize = 16
-        statusLabel.horizontalAlignmentMode = .left
-        statusLabel.position = CGPoint(x: 22, y: size.height - 75)
-        statusLabel.zPosition = 32
-        addChild(statusLabel)
+        manaBar.anchorPoint = CGPoint(x: 0, y: 0.5)
+        manaBar.position = CGPoint(x: -438, y: 162)
+        manaBar.zPosition = 101
+        gameCamera.addChild(manaBar)
 
         scoreLabel.fontSize = 18
-        scoreLabel.position = CGPoint(x: size.width / 2, y: size.height - 36)
-        scoreLabel.zPosition = 32
-        addChild(scoreLabel)
+        scoreLabel.position = CGPoint(x: 0, y: 178)
+        scoreLabel.zPosition = 101
+        gameCamera.addChild(scoreLabel)
 
-        messageLabel.fontSize = 18
-        messageLabel.position = CGPoint(x: size.width / 2, y: 92)
+        laneLabel.fontSize = 13
+        laneLabel.horizontalAlignmentMode = .right
+        laneLabel.position = CGPoint(x: 438, y: 176)
+        laneLabel.zPosition = 101
+        gameCamera.addChild(laneLabel)
+
+        messageLabel.fontSize = 16
+        messageLabel.position = CGPoint(x: 0, y: -150)
         messageLabel.alpha = 0
-        messageLabel.zPosition = 32
-        addChild(messageLabel)
+        messageLabel.zPosition = 101
+        gameCamera.addChild(messageLabel)
 
-        towerLabel.fontSize = 13
-        towerLabel.position = CGPoint(x: size.width / 2, y: size.height - 61)
-        towerLabel.zPosition = 32
-        addChild(towerLabel)
+        let mini = SKShapeNode(rectOf: CGSize(width: 150, height: 90), cornerRadius: 8)
+        mini.fillColor = .black.withAlphaComponent(0.42)
+        mini.strokeColor = .white.withAlphaComponent(0.25)
+        mini.lineWidth = 1
+        mini.position = CGPoint(x: 350, y: 118)
+        mini.zPosition = 100
+        gameCamera.addChild(mini)
+
+        for y in [-22.0, 0.0, 22.0] {
+            let line = SKShapeNode(rectOf: CGSize(width: 120, height: 4), cornerRadius: 2)
+            line.fillColor = .white.withAlphaComponent(0.18)
+            line.strokeColor = .clear
+            line.position = CGPoint(x: 0, y: y)
+            mini.addChild(line)
+        }
 
         updateHUD()
     }
@@ -259,30 +415,41 @@ final class GameScene: SKScene {
     func basicAttack() {
         guard !gameOver, !player.isHidden else { return }
         let now = CACurrentMediaTime()
-        let cooldown: TimeInterval = now < attackBuffUntil ? 0.38 : (heroClass == .marksman ? 0.58 : 0.72)
-        guard now - lastAttackTime >= cooldown else { return }
+        let cd: TimeInterval = now < attackBuffUntil ? 0.36 : (heroClass == .marksman ? 0.55 : 0.72)
+        guard now - lastAttackTime >= cd else { return }
         lastAttackTime = now
+        let damage = heroClass.attackDamage * (now < attackBuffUntil ? 1.25 : 1)
 
-        let damage = heroClass.attackDamage * (now < attackBuffUntil ? 1.22 : 1.0)
-        if let targetMinion = nearestMinion(team: 1, from: player.position), distance(player.position, targetMinion.node.position) <= heroClass.attackRange {
-            performAttackVisual(to: targetMinion.node.position, ranged: heroClass.attackRange > 150) { [weak self, weak targetMinion] in
-                guard let self, let targetMinion else { return }
-                targetMinion.hp -= damage
-                self.cleanupDeadMinions()
+        if let minion = nearestMinion(team: 1, from: player.position), distance(player.position, minion.node.position) <= heroClass.attackRange {
+            attackVisual(to: minion.node.position) { [weak self, weak minion] in
+                guard let self, let minion else { return }
+                minion.hp -= damage
+                self.cleanupDeadUnits()
             }
             return
         }
 
-        if !enemyHero.isHidden && distance(player.position, enemyHero.position) <= heroClass.attackRange {
-            performAttackVisual(to: enemyHero.position, ranged: heroClass.attackRange > 150) { [weak self] in
-                self?.damageEnemyHero(damage)
+        if let bot = nearestBot(team: 1, from: player.position), distance(player.position, bot.node.position) <= heroClass.attackRange {
+            attackVisual(to: bot.node.position) { [weak self, weak bot] in
+                guard let self, let bot else { return }
+                self.damageBot(bot, damage)
             }
             return
         }
 
-        if distance(player.position, enemyTower.node.position) <= heroClass.attackRange + 20 {
-            performAttackVisual(to: enemyTower.node.position, ranged: heroClass.attackRange > 150) { [weak self] in
-                self?.damageTower(self?.enemyTower, amount: damage)
+        if let tower = nearestTower(team: 1, from: player.position), distance(player.position, tower.node.position) <= heroClass.attackRange + 30 {
+            attackVisual(to: tower.node.position) { [weak self, weak tower] in
+                guard let self, let tower else { return }
+                self.damageTower(tower, damage)
+            }
+            return
+        }
+
+        if let camp = nearestCamp(from: player.position), distance(player.position, camp.node.position) <= heroClass.attackRange + 25 {
+            attackVisual(to: camp.node.position) { [weak self, weak camp] in
+                guard let self, let camp else { return }
+                camp.hp -= damage
+                if camp.hp <= 0 { self.killCamp(camp) }
             }
         }
     }
@@ -290,499 +457,432 @@ final class GameScene: SKScene {
     func castSkill(_ index: Int) {
         guard !gameOver, !player.isHidden, heroClass.skills.indices.contains(index) else { return }
         let now = CACurrentMediaTime()
-        let skill = heroClass.skills[index]
-        if let last = skillLastUsed[index], now - last < skill.cooldown {
-            showMessage("\(skill.name): \(Int(ceil(skill.cooldown - (now - last))))s")
+        let spec = heroClass.skills[index]
+        if let last = skillLastUsed[index], now - last < spec.cooldown {
+            showMessage("\(Int(ceil(spec.cooldown - (now - last))))s cooldown")
             return
         }
-        guard playerMana >= skill.mana else {
+        guard playerMana >= spec.mana else {
             showMessage("Not enough mana")
             return
         }
-
-        playerMana -= skill.mana
+        playerMana -= spec.mana
         skillLastUsed[index] = now
         let aim = aimDirection()
 
         switch heroClass {
-        case .tank: castTank(index, aim: aim, now: now)
-        case .fighter: castFighter(index, aim: aim, now: now)
-        case .assassin: castAssassin(index, aim: aim, now: now)
-        case .mage: castMage(index, aim: aim, now: now)
-        case .marksman: castMarksman(index, aim: aim, now: now)
-        case .support: castSupport(index, aim: aim, now: now)
+        case .tank:
+            if index == 0 { areaDamage(radius: 155, amount: 130) }
+            else if index == 1 { dash(190, aim); areaDamage(radius: 115, amount: 105) }
+            else if index == 2 { shieldHP = min(560, shieldHP + 360); ring(at: player.position, radius: 80, color: .systemCyan) }
+            else { areaDamage(radius: 270, amount: 250) }
+        case .fighter:
+            if index == 0 { areaDamage(radius: 145, amount: 165) }
+            else if index == 1 { dash(170, aim); areaDamage(radius: 110, amount: 130) }
+            else if index == 2 { attackBuffUntil = now + 6; playerHP = min(heroClass.maxHP, playerHP + 140) }
+            else { areaDamage(radius: 220, amount: 350) }
+        case .assassin:
+            if index == 0 { dash(250, aim); areaDamage(radius: 100, amount: 190) }
+            else if index == 1 { projectileDamage(range: 390, amount: 175) }
+            else if index == 2 { stealthUntil = now + 3.2; player.alpha = 0.42; dash(150, aim) }
+            else { projectileDamage(range: 420, amount: 390) }
+        case .mage:
+            if index == 0 { projectileDamage(range: 520, amount: 165) }
+            else if index == 1 { areaDamage(radius: 190, amount: 145) }
+            else if index == 2 { dash(185, aim) }
+            else { areaDamage(radius: 330, amount: 410) }
+        case .marksman:
+            if index == 0 { projectileDamage(range: 650, amount: 190) }
+            else if index == 1 { dash(180, aim) }
+            else if index == 2 { attackBuffUntil = now + 6.5 }
+            else { projectileDamage(range: 760, amount: 380) }
+        case .support:
+            if index == 0 { playerHP = min(heroClass.maxHP, playerHP + 260); ring(at: player.position, radius: 130, color: .systemGreen) }
+            else if index == 1 { projectileDamage(range: 480, amount: 120) }
+            else if index == 2 { shieldHP = min(500, shieldHP + 300) }
+            else { playerHP = min(heroClass.maxHP, playerHP + 420); shieldHP = min(620, shieldHP + 260); ring(at: player.position, radius: 280, color: .systemMint) }
         }
         updateHUD()
     }
 
-    private func castTank(_ index: Int, aim: CGVector, now: TimeInterval) {
-        switch index {
-        case 0:
-            effectRing(at: player.position, radius: 150, color: .systemCyan)
-            damageEnemies(around: player.position, radius: 150, amount: 120)
-            if !enemyHero.isHidden && distance(player.position, enemyHero.position) <= 155 {
-                enemyStunnedUntil = now + 1.0
-            }
-        case 1:
-            dash(distance: 190, direction: aim)
-            effectRing(at: player.position, radius: 120, color: .systemBlue)
-            damageEnemies(around: player.position, radius: 125, amount: 105)
-        case 2:
-            shieldHP = min(520, shieldHP + 340)
-            effectRing(at: player.position, radius: 72, color: .systemTeal)
-            showMessage("Bulwark +340 shield")
-        default:
-            effectRing(at: player.position, radius: 270, color: .systemYellow)
-            damageEnemies(around: player.position, radius: 270, amount: 210)
-            if !enemyHero.isHidden && distance(player.position, enemyHero.position) <= 270 {
-                enemyStunnedUntil = now + 2.0
-            }
-        }
-    }
-
-    private func castFighter(_ index: Int, aim: CGVector, now: TimeInterval) {
-        switch index {
-        case 0:
-            effectRing(at: player.position, radius: 145, color: .systemOrange)
-            damageEnemies(around: player.position, radius: 145, amount: 155)
-        case 1:
-            dash(distance: 165, direction: aim)
-            damageEnemies(around: player.position, radius: 110, amount: 120)
-        case 2:
-            attackBuffUntil = now + 6
-            playerHP = min(heroClass.maxHP, playerHP + 120)
-            showMessage("Battle Surge")
-        default:
-            spinEffect(color: .systemOrange)
-            damageEnemies(around: player.position, radius: 205, amount: 330)
-        }
-    }
-
-    private func castAssassin(_ index: Int, aim: CGVector, now: TimeInterval) {
-        switch index {
-        case 0:
-            if !enemyHero.isHidden && distance(player.position, enemyHero.position) <= 430 {
-                let dx = enemyHero.position.x - player.position.x
-                let dy = enemyHero.position.y - player.position.y
-                let len = max(1, sqrt(dx * dx + dy * dy))
-                player.position = CGPoint(x: enemyHero.position.x - dx / len * 72, y: enemyHero.position.y - dy / len * 72)
-                flash(at: player.position, color: .systemPurple)
-                damageEnemyHero(185)
-            } else {
-                dash(distance: 205, direction: aim)
-            }
-        case 1:
-            projectileSkill(direction: aim, range: 460, color: .systemPurple, damage: 185)
-        case 2:
-            dash(distance: 150, direction: aim)
-            veilUntil = now + 3.2
-            player.alpha = 0.42
-            showMessage("Veil Step")
-        default:
-            if !enemyHero.isHidden && distance(player.position, enemyHero.position) <= 280 {
-                let missing = enemyMaxHP - enemyHP
-                damageEnemyHero(220 + missing * 0.38)
-                flash(at: enemyHero.position, color: .systemPink)
-            } else {
-                showMessage("Execution: target out of range")
-            }
-        }
-    }
-
-    private func castMage(_ index: Int, aim: CGVector, now: TimeInterval) {
-        switch index {
-        case 0:
-            projectileSkill(direction: aim, range: 520, color: .systemIndigo, damage: 190)
-        case 1:
-            effectRing(at: player.position, radius: 185, color: .systemBlue)
-            damageEnemies(around: player.position, radius: 185, amount: 125)
-            if !enemyHero.isHidden && distance(player.position, enemyHero.position) <= 185 {
-                enemyStunnedUntil = now + 1.35
-            }
-        case 2:
-            flash(at: player.position, color: .white)
-            dash(distance: 200, direction: aim)
-            flash(at: player.position, color: .systemIndigo)
-        default:
-            let point = !enemyHero.isHidden ? enemyHero.position : CGPoint(x: player.position.x + aim.dx * 260, y: player.position.y + aim.dy * 260)
-            meteorEffect(at: point)
-            run(.sequence([.wait(forDuration: 0.55), .run { [weak self] in
-                guard let self else { return }
-                self.damageEnemies(around: point, radius: 220, amount: 350)
-            }]))
-        }
-    }
-
-    private func castMarksman(_ index: Int, aim: CGVector, now: TimeInterval) {
-        switch index {
-        case 0:
-            projectileSkill(direction: aim, range: 620, color: .systemYellow, damage: 175)
-        case 1:
-            dash(distance: 155, direction: aim)
-        case 2:
-            attackBuffUntil = now + 6.5
-            showMessage("Rapid Fire")
-        default:
-            if !enemyHero.isHidden && distance(player.position, enemyHero.position) <= 610 {
-                for i in 0..<4 {
-                    run(.sequence([.wait(forDuration: Double(i) * 0.18), .run { [weak self] in
-                        guard let self, !self.enemyHero.isHidden else { return }
-                        self.launchProjectile(from: self.player.position, to: self.enemyHero.position, color: .systemYellow) {
-                            self.damageEnemyHero(88)
-                        }
-                    }]))
-                }
-            } else {
-                showMessage("Deadeye: target out of range")
-            }
-        }
-    }
-
-    private func castSupport(_ index: Int, aim: CGVector, now: TimeInterval) {
-        switch index {
-        case 0:
-            playerHP = min(heroClass.maxHP, playerHP + 245)
-            effectRing(at: player.position, radius: 120, color: .systemGreen)
-        case 1:
-            projectileSkill(direction: aim, range: 500, color: .systemMint, damage: 105, stun: 1.55)
-        case 2:
-            shieldHP = min(480, shieldHP + 260)
-            effectRing(at: player.position, radius: 155, color: .systemMint)
-            showMessage("Guardian Aura")
-        default:
-            playerHP = min(heroClass.maxHP, playerHP + 390)
-            shieldHP = min(520, shieldHP + 180)
-            effectRing(at: player.position, radius: 260, color: .systemGreen)
-            damageEnemies(around: player.position, radius: 260, amount: 130)
-            if !enemyHero.isHidden && distance(player.position, enemyHero.position) <= 260 {
-                enemyStunnedUntil = now + 1.0
-            }
-        }
-    }
-
     override func update(_ currentTime: TimeInterval) {
         if lastFrameTime == 0 { lastFrameTime = currentTime }
-        let dt = min(0.05, currentTime - lastFrameTime)
+        let dt = min(currentTime - lastFrameTime, 1.0 / 20.0)
         lastFrameTime = currentTime
 
-        if currentTime - lastWaveTime >= 6.0 && !gameOver {
-            spawnWave()
+        if currentTime - lastWaveTime >= 12 {
             lastWaveTime = currentTime
+            spawnWave()
         }
 
         handleRespawns(currentTime)
         guard !gameOver else { return }
 
-        playerMana = min(heroClass.maxMana, playerMana + CGFloat(dt) * 15)
-        if heroClass == .support {
-            playerHP = min(heroClass.maxHP, playerHP + CGFloat(dt) * 4)
-        }
-
-        if currentTime >= veilUntil { player.alpha = 1 }
+        playerMana = min(heroClass.maxMana, playerMana + CGFloat(dt) * 17)
+        if heroClass == .support { playerHP = min(heroClass.maxHP, playerHP + CGFloat(dt) * 3.5) }
+        if currentTime >= stealthUntil { player.alpha = 1 }
 
         if !player.isHidden {
             player.position.x += movement.dx * heroClass.moveSpeed * CGFloat(dt)
             player.position.y += movement.dy * heroClass.moveSpeed * CGFloat(dt)
-            clampPlayer()
+            player.position.x = min(max(player.position.x, 90), worldWidth - 90)
+            player.position.y = min(max(player.position.y, 90), worldHeight - 90)
         }
 
-        updateEnemyAI(currentTime, dt: dt)
         updateMinions(currentTime, dt: dt)
+        updateBots(currentTime, dt: dt)
         updateTowers(currentTime)
-        cleanupDeadMinions()
+        updateCamera()
+        cleanupDeadUnits()
         updateHUD()
     }
 
-    private func updateEnemyAI(_ now: TimeInterval, dt: TimeInterval) {
-        guard !enemyHero.isHidden, now >= enemyStunnedUntil else { return }
-
-        let target = player.isHidden ? CGPoint(x: 700, y: size.height / 2) : player.position
-        let d = distance(enemyHero.position, target)
-        let retreat = enemyHP < 340
-        let desired = retreat ? CGPoint(x: size.width - 180, y: size.height / 2) : target
-
-        if !player.isHidden && d < 145 && now >= veilUntil {
-            if now - enemyLastAttackTime > 0.9 {
-                enemyLastAttackTime = now
-                flash(at: player.position, color: .systemRed)
-                damagePlayer(88)
+    private func spawnWave() {
+        for lane in Lane.allCases {
+            for team in [0, 1] {
+                for i in 0..<4 {
+                    let path = lanePoints(lane)
+                    let start = team == 0 ? path[0] : path[path.count - 1]
+                    let direction: CGFloat = team == 0 ? 1 : -1
+                    let offset = CGFloat(i) * 32 * direction
+                    let minion = LaneMinion(team: team, lane: lane, position: CGPoint(x: start.x + offset, y: start.y + CGFloat(i % 2) * 22 - 11))
+                    minions.append(minion)
+                    worldRoot.addChild(minion.node)
+                }
             }
-        } else {
-            move(node: enemyHero, toward: desired, speed: retreat ? 215 : 175, dt: dt)
-        }
-
-        if !player.isHidden && d < 260 && now - enemyLastAttackTime > 3.0 && now >= veilUntil {
-            enemyLastAttackTime = now
-            effectRing(at: enemyHero.position, radius: 170, color: .systemRed)
-            damagePlayer(120)
         }
     }
 
     private func updateMinions(_ now: TimeInterval, dt: TimeInterval) {
-        for minion in minions where minion.hp > 0 {
-            let direction: CGFloat = minion.team == 0 ? 1 : -1
-            let enemyTeam = minion.team == 0 ? 1 : 0
-
-            if let other = nearestMinion(team: enemyTeam, from: minion.node.position), distance(minion.node.position, other.node.position) < 50 {
+        for minion in minions where minion.hp > 0 && minion.node.parent != nil {
+            if let enemy = nearestMinion(team: 1 - minion.team, from: minion.node.position), distance(minion.node.position, enemy.node.position) < 55 {
                 if now >= minion.nextAttack {
                     minion.nextAttack = now + 0.85
-                    other.hp -= 34
-                    flash(at: other.node.position, color: minion.team == 0 ? .systemTeal : .systemRed)
+                    enemy.hp -= 36
+                    flash(at: enemy.node.position, color: minion.team == 0 ? .systemTeal : .systemRed)
                 }
                 continue
             }
 
-            if minion.team == 0 && !enemyHero.isHidden && distance(minion.node.position, enemyHero.position) < 58 {
+            if let bot = nearestBot(team: 1 - minion.team, from: minion.node.position), distance(minion.node.position, bot.node.position) < 65 {
                 if now >= minion.nextAttack {
-                    minion.nextAttack = now + 0.9
-                    damageEnemyHero(28)
+                    minion.nextAttack = now + 0.95
+                    damageBot(bot, 30)
                 }
                 continue
             }
 
-            if minion.team == 1 && !player.isHidden && distance(minion.node.position, player.position) < 58 {
+            if minion.team == 1 && !player.isHidden && distance(minion.node.position, player.position) < 66 {
                 if now >= minion.nextAttack {
-                    minion.nextAttack = now + 0.9
-                    damagePlayer(28)
+                    minion.nextAttack = now + 0.95
+                    damagePlayer(30)
                 }
                 continue
             }
 
-            let targetTower = minion.team == 0 ? enemyTower! : allyTower!
-            if distance(minion.node.position, targetTower.node.position) < 58 {
+            if let tower = nearestTower(team: 1 - minion.team, from: minion.node.position), distance(minion.node.position, tower.node.position) < 72 {
                 if now >= minion.nextAttack {
-                    minion.nextAttack = now + 0.9
-                    damageTower(targetTower, amount: 30)
+                    minion.nextAttack = now + 1.0
+                    damageTower(tower, 30)
                 }
                 continue
             }
 
-            minion.node.position.x += direction * 88 * CGFloat(dt)
+            moveMinionAlongLane(minion, dt: dt)
+        }
+    }
+
+    private func moveMinionAlongLane(_ minion: LaneMinion, dt: TimeInterval) {
+        let original = lanePoints(minion.lane)
+        let path = minion.team == 0 ? original : original.reversed()
+        let points = Array(path)
+        let index = min(minion.waypointIndex + 1, points.count - 1)
+        let target = points[index]
+        move(node: minion.node, toward: target, speed: 72, dt: dt)
+        if distance(minion.node.position, target) < 26 && minion.waypointIndex < points.count - 2 {
+            minion.waypointIndex += 1
+        }
+    }
+
+    private func updateBots(_ now: TimeInterval, dt: TimeInterval) {
+        for bot in bots where bot.respawnAt == nil && !bot.node.isHidden {
+            if let enemyBot = nearestBot(team: 1 - bot.team, from: bot.node.position, excluding: bot), distance(bot.node.position, enemyBot.node.position) < 125 {
+                if now >= bot.nextAttack {
+                    bot.nextAttack = now + 0.85
+                    damageBot(enemyBot, 82)
+                }
+                continue
+            }
+
+            if bot.team == 1 && !player.isHidden && distance(bot.node.position, player.position) < 145 && now >= stealthUntil {
+                if now >= bot.nextAttack {
+                    bot.nextAttack = now + 0.9
+                    damagePlayer(86)
+                }
+                continue
+            }
+
+            if let minion = nearestMinion(team: 1 - bot.team, from: bot.node.position), distance(bot.node.position, minion.node.position) < 150 {
+                if now >= bot.nextAttack {
+                    bot.nextAttack = now + 0.75
+                    minion.hp -= 72
+                }
+                continue
+            }
+
+            let path = lanePoints(bot.lane)
+            let target: CGPoint
+            if bot.team == 0 {
+                target = path[min(4, path.count - 1)]
+            } else {
+                target = path[max(1, path.count - 5)]
+            }
+            move(node: bot.node, toward: target, speed: 155, dt: dt)
         }
     }
 
     private func updateTowers(_ now: TimeInterval) {
-        towerAttack(allyTower, enemies: minions.filter { $0.team == 1 }, hero: enemyHero, heroHidden: enemyHero.isHidden, now: now)
-        towerAttack(enemyTower, enemies: minions.filter { $0.team == 0 }, hero: player, heroHidden: player.isHidden, now: now)
-    }
+        for tower in towers where tower.hp > 0 && tower.node.parent != nil {
+            guard now >= tower.nextAttack else { continue }
 
-    private func towerAttack(_ tower: TowerUnit, enemies: [LaneMinion], hero: SKShapeNode, heroHidden: Bool, now: TimeInterval) {
-        guard tower.hp > 0, now >= tower.nextAttack else { return }
-        let range: CGFloat = 275
-
-        if let minion = enemies.filter({ $0.hp > 0 && distance(tower.node.position, $0.node.position) <= range }).min(by: { distance(tower.node.position, $0.node.position) < distance(tower.node.position, $1.node.position) }) {
-            tower.nextAttack = now + 1.1
-            launchProjectile(from: tower.node.position, to: minion.node.position, color: tower.team == 0 ? .systemCyan : .systemPink) { [weak self, weak minion] in
-                minion?.hp -= 105
-                self?.cleanupDeadMinions()
+            if let minion = nearestMinion(team: 1 - tower.team, from: tower.node.position), distance(tower.node.position, minion.node.position) <= 285 {
+                tower.nextAttack = now + 0.95
+                minion.hp -= tower.tier == 0 ? 125 : 96
+                towerShot(from: tower.node.position, to: minion.node.position, color: tower.team == 0 ? .systemCyan : .systemPink)
+                continue
             }
-            return
-        }
 
-        if !heroHidden && distance(tower.node.position, hero.position) <= range {
-            tower.nextAttack = now + 1.1
-            launchProjectile(from: tower.node.position, to: hero.position, color: tower.team == 0 ? .systemCyan : .systemPink) { [weak self] in
-                guard let self else { return }
-                if tower.team == 0 { self.damageEnemyHero(125) }
-                else { self.damagePlayer(125) }
+            if let bot = nearestBot(team: 1 - tower.team, from: tower.node.position), distance(tower.node.position, bot.node.position) <= 285 {
+                tower.nextAttack = now + 1.0
+                damageBot(bot, tower.tier == 0 ? 150 : 110)
+                towerShot(from: tower.node.position, to: bot.node.position, color: tower.team == 0 ? .systemCyan : .systemPink)
+                continue
+            }
+
+            if tower.team == 1 && !player.isHidden && distance(tower.node.position, player.position) <= 285 {
+                tower.nextAttack = now + 1.0
+                damagePlayer(tower.tier == 0 ? 155 : 112)
+                towerShot(from: tower.node.position, to: player.position, color: .systemPink)
             }
         }
     }
 
-    private func spawnWave() {
-        let y = size.height / 2
-        for offset in [-32.0, 0.0, 32.0] {
-            let blue = LaneMinion(team: 0, position: CGPoint(x: 205, y: y + offset))
-            let red = LaneMinion(team: 1, position: CGPoint(x: size.width - 205, y: y + offset))
-            minions.append(blue)
-            minions.append(red)
-            addChild(blue.node)
-            addChild(red.node)
+    private func updateCamera() {
+        guard !player.isHidden else { return }
+        let halfW: CGFloat = 465
+        let halfH: CGFloat = 215
+        let desiredX = min(max(player.position.x, halfW), worldWidth - halfW)
+        let desiredY = min(max(player.position.y, halfH), worldHeight - halfH)
+        gameCamera.position.x += (desiredX - gameCamera.position.x) * 0.14
+        gameCamera.position.y += (desiredY - gameCamera.position.y) * 0.14
+    }
+
+    private func handleRespawns(_ now: TimeInterval) {
+        if let respawn = playerRespawnAt, now >= respawn {
+            playerRespawnAt = nil
+            player.isHidden = false
+            player.alpha = 1
+            playerHP = heroClass.maxHP
+            playerMana = heroClass.maxMana
+            player.position = CGPoint(x: 330, y: 900)
+            showMessage("Respawned")
+        }
+
+        for bot in bots {
+            if let respawn = bot.respawnAt, now >= respawn {
+                bot.respawnAt = nil
+                bot.hp = bot.maxHP
+                bot.node.isHidden = false
+                bot.node.position = spawnPosition(team: bot.team, lane: bot.lane, offset: 0)
+            }
+        }
+
+        for camp in jungleCamps {
+            if let respawn = camp.respawnAt, now >= respawn {
+                camp.respawnAt = nil
+                camp.hp = camp.maxHP
+                camp.node.isHidden = false
+            }
         }
     }
 
     private func damagePlayer(_ amount: CGFloat) {
-        guard !player.isHidden else { return }
-        var incoming = amount
+        var remaining = amount
         if shieldHP > 0 {
-            let absorbed = min(shieldHP, incoming)
+            let absorbed = min(shieldHP, remaining)
             shieldHP -= absorbed
-            incoming -= absorbed
+            remaining -= absorbed
         }
-        playerHP -= incoming
-        if playerHP <= 0 {
+        playerHP -= remaining
+        flash(at: player.position, color: .systemRed)
+        if playerHP <= 0 && playerRespawnAt == nil {
             playerHP = 0
             redKills += 1
             player.isHidden = true
-            movement = .zero
-            playerRespawnAt = CACurrentMediaTime() + 4
-            showMessage("Defeated • respawn in 4s")
+            playerRespawnAt = CACurrentMediaTime() + 7
+            showMessage("Defeated • respawn in 7s")
         }
     }
 
-    private func damageEnemyHero(_ amount: CGFloat) {
-        guard !enemyHero.isHidden else { return }
-        enemyHP -= amount
-        if enemyHP <= 0 {
-            enemyHP = 0
-            blueKills += 1
-            enemyHero.isHidden = true
-            enemyRespawnAt = CACurrentMediaTime() + 4
-            showMessage("Enemy defeated")
+    private func damageBot(_ bot: BotHero, _ amount: CGFloat) {
+        guard bot.respawnAt == nil else { return }
+        bot.hp -= amount
+        flash(at: bot.node.position, color: .white)
+        if bot.hp <= 0 {
+            bot.hp = 0
+            bot.node.isHidden = true
+            bot.respawnAt = CACurrentMediaTime() + 8
+            if bot.team == 1 { blueKills += 1 } else { redKills += 1 }
         }
     }
 
-    private func damageTower(_ tower: TowerUnit?, amount: CGFloat) {
-        guard let tower, tower.hp > 0 else { return }
+    private func damageTower(_ tower: TowerUnit, _ amount: CGFloat) {
+        guard tower.hp > 0 else { return }
         tower.hp -= amount
-        tower.node.run(.sequence([.fadeAlpha(to: 0.35, duration: 0.06), .fadeAlpha(to: 1, duration: 0.08)]))
+        tower.node.alpha = max(0.25, tower.hp / tower.maxHP)
+        flash(at: tower.node.position, color: .systemYellow)
         if tower.hp <= 0 {
             tower.hp = 0
-            tower.node.fillColor = .darkGray
-            endMatch(blueWon: tower.team == 1)
-        }
-    }
-
-    private func handleRespawns(_ now: TimeInterval) {
-        if let time = playerRespawnAt, now >= time {
-            playerRespawnAt = nil
-            playerHP = heroClass.maxHP
-            playerMana = heroClass.maxMana
-            shieldHP = 0
-            player.position = CGPoint(x: 235, y: size.height / 2)
-            player.isHidden = false
-            flash(at: player.position, color: playerColor())
-        }
-        if let time = enemyRespawnAt, now >= time {
-            enemyRespawnAt = nil
-            enemyHP = enemyMaxHP
-            enemyHero.position = CGPoint(x: size.width - 235, y: size.height / 2)
-            enemyHero.isHidden = false
-            flash(at: enemyHero.position, color: .systemRed)
-        }
-    }
-
-    private func endMatch(blueWon: Bool) {
-        gameOver = true
-        movement = .zero
-        let label = SKLabelNode(fontNamed: "AvenirNext-Heavy")
-        label.text = blueWon ? "VICTORY" : "DEFEAT"
-        label.fontSize = 64
-        label.position = CGPoint(x: size.width / 2, y: size.height / 2 + 75)
-        label.zPosition = 100
-        addChild(label)
-
-        let sub = SKLabelNode(fontNamed: "AvenirNext-Medium")
-        sub.text = "Destroying the enemy tower ends this prototype match"
-        sub.fontSize = 18
-        sub.position = CGPoint(x: size.width / 2, y: size.height / 2 + 28)
-        sub.zPosition = 100
-        addChild(sub)
-    }
-
-    private func projectileSkill(direction: CGVector, range: CGFloat, color: SKColor, damage: CGFloat, stun: TimeInterval = 0) {
-        let start = player.position
-        let end = CGPoint(x: start.x + direction.dx * range, y: start.y + direction.dy * range)
-        let projectile = SKShapeNode(circleOfRadius: 11)
-        projectile.fillColor = color
-        projectile.strokeColor = .white
-        projectile.lineWidth = 1
-        projectile.position = start
-        projectile.zPosition = 15
-        addChild(projectile)
-
-        projectile.run(.sequence([.move(to: end, duration: 0.38), .run { [weak self, weak projectile] in
-            guard let self, let projectile else { return }
-            if !self.enemyHero.isHidden && self.distance(projectile.position, self.enemyHero.position) <= 90 {
-                self.damageEnemyHero(damage)
-                if stun > 0 { self.enemyStunnedUntil = CACurrentMediaTime() + stun }
+            tower.node.run(.sequence([.scale(to: 1.35, duration: 0.12), .fadeOut(withDuration: 0.25), .removeFromParent()]))
+            if tower.tier == 0 {
+                gameOver = true
+                showMessage(tower.team == 1 ? "VICTORY" : "DEFEAT")
             }
-            for minion in self.minions where minion.team == 1 && minion.hp > 0 && self.distance(projectile.position, minion.node.position) <= 80 {
-                minion.hp -= damage
-            }
-            self.cleanupDeadMinions()
-        }, .removeFromParent()]))
+        }
     }
 
-    private func damageEnemies(around point: CGPoint, radius: CGFloat, amount: CGFloat) {
-        if !enemyHero.isHidden && distance(point, enemyHero.position) <= radius {
-            damageEnemyHero(amount)
+    private func killCamp(_ camp: JungleCamp) {
+        camp.hp = 0
+        camp.node.isHidden = true
+        camp.respawnAt = CACurrentMediaTime() + 22
+        playerHP = min(heroClass.maxHP, playerHP + 100)
+        attackBuffUntil = max(attackBuffUntil, CACurrentMediaTime() + 8)
+        showMessage("Jungle buff acquired")
+    }
+
+    private func cleanupDeadUnits() {
+        for minion in minions where minion.hp <= 0 && minion.node.parent != nil {
+            minion.node.removeFromParent()
         }
-        for minion in minions where minion.team == 1 && minion.hp > 0 && distance(point, minion.node.position) <= radius {
+        minions.removeAll { $0.hp <= 0 && $0.node.parent == nil }
+    }
+
+    private func areaDamage(radius: CGFloat, amount: CGFloat) {
+        ring(at: player.position, radius: radius, color: playerColor())
+        for minion in minions where minion.team == 1 && minion.hp > 0 && distance(player.position, minion.node.position) <= radius {
             minion.hp -= amount
         }
-        cleanupDeadMinions()
+        for bot in bots where bot.team == 1 && bot.respawnAt == nil && distance(player.position, bot.node.position) <= radius {
+            damageBot(bot, amount)
+        }
+        for camp in jungleCamps where camp.respawnAt == nil && distance(player.position, camp.node.position) <= radius {
+            camp.hp -= amount
+            if camp.hp <= 0 { killCamp(camp) }
+        }
+        cleanupDeadUnits()
     }
 
-    private func performAttackVisual(to point: CGPoint, ranged: Bool, completion: @escaping () -> Void) {
-        if ranged {
-            launchProjectile(from: player.position, to: point, color: playerColor(), completion: completion)
+    private func projectileDamage(range: CGFloat, amount: CGFloat) {
+        let dir = aimDirection()
+        let end = CGPoint(x: player.position.x + dir.dx * range, y: player.position.y + dir.dy * range)
+        towerShot(from: player.position, to: end, color: playerColor())
+
+        var best: (CGFloat, BotHero)?
+        for bot in bots where bot.team == 1 && bot.respawnAt == nil {
+            let d = distancePointToSegment(bot.node.position, player.position, end)
+            if d < 70 {
+                let along = distance(player.position, bot.node.position)
+                if along <= range && (best == nil || along < best!.0) { best = (along, bot) }
+            }
+        }
+        if let bot = best?.1 { damageBot(bot, amount) }
+
+        for minion in minions where minion.team == 1 && minion.hp > 0 {
+            if distancePointToSegment(minion.node.position, player.position, end) < 42 && distance(player.position, minion.node.position) <= range {
+                minion.hp -= amount * 0.75
+            }
+        }
+        cleanupDeadUnits()
+    }
+
+    private func dash(_ amount: CGFloat, _ direction: CGVector) {
+        player.position.x = min(max(player.position.x + direction.dx * amount, 90), worldWidth - 90)
+        player.position.y = min(max(player.position.y + direction.dy * amount, 90), worldHeight - 90)
+        flash(at: player.position, color: playerColor())
+    }
+
+    private func attackVisual(to point: CGPoint, completion: @escaping () -> Void) {
+        if heroClass.attackRange > 150 {
+            let bolt = SKShapeNode(circleOfRadius: 6)
+            bolt.fillColor = playerColor()
+            bolt.strokeColor = .white
+            bolt.position = player.position
+            bolt.zPosition = 30
+            worldRoot.addChild(bolt)
+            let duration = max(0.08, Double(distance(player.position, point) / 900))
+            bolt.run(.sequence([.move(to: point, duration: duration), .run(completion), .removeFromParent()]))
         } else {
             flash(at: point, color: playerColor())
             completion()
         }
     }
 
-    private func launchProjectile(from: CGPoint, to: CGPoint, color: SKColor, completion: @escaping () -> Void) {
-        let orb = SKShapeNode(circleOfRadius: 7)
-        orb.fillColor = color
-        orb.strokeColor = .white.withAlphaComponent(0.7)
-        orb.lineWidth = 1
-        orb.position = from
-        orb.zPosition = 14
-        addChild(orb)
-        orb.run(.sequence([.move(to: to, duration: 0.18), .run(completion), .removeFromParent()]))
+    private func towerShot(from: CGPoint, to: CGPoint, color: SKColor) {
+        let line = SKShapeNode()
+        let path = CGMutablePath()
+        path.move(to: from)
+        path.addLine(to: to)
+        line.path = path
+        line.strokeColor = color
+        line.lineWidth = 5
+        line.glowWidth = 4
+        line.zPosition = 28
+        worldRoot.addChild(line)
+        line.run(.sequence([.fadeOut(withDuration: 0.16), .removeFromParent()]))
     }
 
-    private func dash(distance value: CGFloat, direction: CGVector) {
-        let p = CGPoint(x: player.position.x + direction.dx * value, y: player.position.y + direction.dy * value)
-        player.position = p
-        clampPlayer()
-        flash(at: player.position, color: playerColor())
+    private func ring(at point: CGPoint, radius: CGFloat, color: SKColor) {
+        let ring = SKShapeNode(circleOfRadius: radius)
+        ring.position = point
+        ring.fillColor = color.withAlphaComponent(0.10)
+        ring.strokeColor = color.withAlphaComponent(0.85)
+        ring.lineWidth = 4
+        ring.zPosition = 25
+        ring.setScale(0.25)
+        worldRoot.addChild(ring)
+        ring.run(.sequence([.group([.scale(to: 1, duration: 0.18), .fadeOut(withDuration: 0.28)]), .removeFromParent()]))
     }
 
-    private func aimDirection() -> CGVector {
-        let length = sqrt(movement.dx * movement.dx + movement.dy * movement.dy)
-        if length > 0.15 {
-            return CGVector(dx: movement.dx / length, dy: movement.dy / length)
-        }
-        if !enemyHero.isHidden {
-            let dx = enemyHero.position.x - player.position.x
-            let dy = enemyHero.position.y - player.position.y
-            let len = max(1, sqrt(dx * dx + dy * dy))
-            return CGVector(dx: dx / len, dy: dy / len)
-        }
-        return CGVector(dx: 1, dy: 0)
+    private func flash(at point: CGPoint, color: SKColor) {
+        let f = SKShapeNode(circleOfRadius: 18)
+        f.position = point
+        f.fillColor = color
+        f.strokeColor = .clear
+        f.zPosition = 35
+        worldRoot.addChild(f)
+        f.run(.sequence([.scale(to: 1.8, duration: 0.09), .fadeOut(withDuration: 0.12), .removeFromParent()]))
     }
 
-    private func nearestMinion(team: Int, from point: CGPoint) -> LaneMinion? {
-        minions.filter { $0.team == team && $0.hp > 0 }.min { distance(point, $0.node.position) < distance(point, $1.node.position) }
+    private func updateHUD() {
+        hpBar.xScale = max(0, playerHP / heroClass.maxHP)
+        manaBar.xScale = max(0, playerMana / heroClass.maxMana)
+        scoreLabel.text = "\(blueKills)   •   \(redKills)"
+        laneLabel.text = "\(currentLaneName())  •  Shield \(Int(shieldHP))"
     }
 
-    private func cleanupDeadMinions() {
-        for minion in minions where minion.hp <= 0 {
-            minion.node.removeFromParent()
-        }
-        minions.removeAll { $0.hp <= 0 }
+    private func currentLaneName() -> String {
+        let y = player.position.y
+        if y > 1180 { return "TOP" }
+        if y < 620 { return "BOTTOM" }
+        if abs(y - 900) < 210 { return "MID" }
+        return "JUNGLE"
     }
 
-    private func move(node: SKNode, toward target: CGPoint, speed: CGFloat, dt: TimeInterval) {
-        let dx = target.x - node.position.x
-        let dy = target.y - node.position.y
-        let len = max(1, sqrt(dx * dx + dy * dy))
-        node.position.x += dx / len * speed * CGFloat(dt)
-        node.position.y += dy / len * speed * CGFloat(dt)
-    }
-
-    private func clampPlayer() {
-        player.position.x = min(size.width - 50, max(50, player.position.x))
-        player.position.y = min(size.height - 92, max(92, player.position.y))
-    }
-
-    private func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
-        let dx = a.x - b.x
-        let dy = a.y - b.y
-        return sqrt(dx * dx + dy * dy)
+    private func showMessage(_ text: String) {
+        messageLabel.removeAllActions()
+        messageLabel.text = text
+        messageLabel.alpha = 1
+        messageLabel.run(.sequence([.wait(forDuration: 1.25), .fadeOut(withDuration: 0.25)]))
     }
 
     private func playerColor() -> SKColor {
@@ -796,79 +896,64 @@ final class GameScene: SKScene {
         }
     }
 
-    private func effectRing(at point: CGPoint, radius: CGFloat, color: SKColor) {
-        let ring = SKShapeNode(circleOfRadius: 24)
-        ring.fillColor = color.withAlphaComponent(0.18)
-        ring.strokeColor = color
-        ring.lineWidth = 3
-        ring.position = point
-        ring.zPosition = 12
-        addChild(ring)
-        let scale = radius / 24
-        ring.run(.sequence([.group([.scale(to: scale, duration: 0.26), .fadeOut(withDuration: 0.30)]), .removeFromParent()]))
+    private func aimDirection() -> CGVector {
+        let len = sqrt(movement.dx * movement.dx + movement.dy * movement.dy)
+        if len > 0.18 { return CGVector(dx: movement.dx / len, dy: movement.dy / len) }
+        if let bot = nearestBot(team: 1, from: player.position) {
+            let dx = bot.node.position.x - player.position.x
+            let dy = bot.node.position.y - player.position.y
+            let d = max(1, sqrt(dx * dx + dy * dy))
+            return CGVector(dx: dx / d, dy: dy / d)
+        }
+        return CGVector(dx: 1, dy: 0)
     }
 
-    private func flash(at point: CGPoint, color: SKColor) {
-        let spark = SKShapeNode(circleOfRadius: 18)
-        spark.fillColor = color
-        spark.strokeColor = .white
-        spark.position = point
-        spark.zPosition = 18
-        addChild(spark)
-        spark.run(.sequence([.group([.scale(to: 2.4, duration: 0.16), .fadeOut(withDuration: 0.18)]), .removeFromParent()]))
+    private func nearestMinion(team: Int, from point: CGPoint) -> LaneMinion? {
+        minions.filter { $0.team == team && $0.hp > 0 && $0.node.parent != nil }.min { distance(point, $0.node.position) < distance(point, $1.node.position) }
     }
 
-    private func spinEffect(color: SKColor) {
-        let ring = SKShapeNode(rectOf: CGSize(width: 215, height: 26), cornerRadius: 13)
-        ring.fillColor = color.withAlphaComponent(0.35)
-        ring.strokeColor = color
-        ring.position = player.position
-        ring.zPosition = 11
-        addChild(ring)
-        ring.run(.sequence([.group([.rotate(byAngle: .pi * 2, duration: 0.55), .fadeOut(withDuration: 0.55)]), .removeFromParent()]))
+    private func nearestBot(team: Int, from point: CGPoint, excluding: BotHero? = nil) -> BotHero? {
+        bots.filter { $0.team == team && $0.respawnAt == nil && !$0.node.isHidden && $0 !== excluding }.min { distance(point, $0.node.position) < distance(point, $1.node.position) }
     }
 
-    private func meteorEffect(at point: CGPoint) {
-        let marker = SKShapeNode(circleOfRadius: 92)
-        marker.fillColor = .systemRed.withAlphaComponent(0.12)
-        marker.strokeColor = .systemOrange
-        marker.lineWidth = 4
-        marker.position = point
-        marker.zPosition = 10
-        addChild(marker)
-        marker.run(.sequence([.scale(to: 0.72, duration: 0.52), .removeFromParent()]))
-
-        let meteor = SKShapeNode(circleOfRadius: 30)
-        meteor.fillColor = .systemOrange
-        meteor.strokeColor = .white
-        meteor.position = CGPoint(x: point.x + 160, y: size.height + 90)
-        meteor.zPosition = 20
-        addChild(meteor)
-        meteor.run(.sequence([.move(to: point, duration: 0.55), .group([.scale(to: 3.4, duration: 0.18), .fadeOut(withDuration: 0.2)]), .removeFromParent()]))
+    private func nearestTower(team: Int, from point: CGPoint) -> TowerUnit? {
+        towers.filter { $0.team == team && $0.hp > 0 && $0.node.parent != nil }.min { distance(point, $0.node.position) < distance(point, $1.node.position) }
     }
 
-    private func updateHUD() {
-        let hpRatio = max(0, min(1, playerHP / heroClass.maxHP))
-        playerHPBar.xScale = hpRatio
-        let manaRatio = max(0, min(1, playerMana / heroClass.maxMana))
-        playerManaBar.xScale = manaRatio
-        enemyHPBar.xScale = max(0, min(1, enemyHP / enemyMaxHP))
-
-        let shieldText = shieldHP > 0 ? "  Shield \(Int(shieldHP))" : ""
-        statusLabel.text = "\(heroClass.rawValue)  HP \(Int(playerHP))/\(Int(heroClass.maxHP))  Mana \(Int(playerMana))/\(Int(heroClass.maxMana))\(shieldText)"
-        scoreLabel.text = "BLUE \(blueKills)  •  \(redKills) RED"
-        towerLabel.text = "Ally Tower \(Int(max(0, allyTower.hp)))   |   Enemy Tower \(Int(max(0, enemyTower.hp)))"
+    private func nearestCamp(from point: CGPoint) -> JungleCamp? {
+        jungleCamps.filter { $0.respawnAt == nil && !$0.node.isHidden }.min { distance(point, $0.node.position) < distance(point, $1.node.position) }
     }
 
-    private func showMessage(_ text: String) {
-        messageToken += 1
-        let token = messageToken
-        messageLabel.removeAllActions()
-        messageLabel.text = text
-        messageLabel.alpha = 1
-        messageLabel.run(.sequence([.wait(forDuration: 1.0), .run { [weak self] in
-            guard let self, self.messageToken == token else { return }
-            self.messageLabel.run(.fadeOut(withDuration: 0.25))
-        }]))
+    private func spawnPosition(team: Int, lane: Lane, offset: CGFloat) -> CGPoint {
+        let points = lanePoints(lane)
+        let p = team == 0 ? points[1] : points[points.count - 2]
+        return CGPoint(x: p.x + (team == 0 ? offset : -offset), y: p.y + offset * 0.25)
+    }
+
+    private func move(node: SKNode, toward point: CGPoint, speed: CGFloat, dt: TimeInterval) {
+        let dx = point.x - node.position.x
+        let dy = point.y - node.position.y
+        let d = max(1, sqrt(dx * dx + dy * dy))
+        node.position.x += dx / d * speed * CGFloat(dt)
+        node.position.y += dy / d * speed * CGFloat(dt)
+    }
+
+    private func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+        hypot(a.x - b.x, a.y - b.y)
+    }
+
+    private func interpolate(_ a: CGPoint, _ b: CGPoint, _ t: CGFloat) -> CGPoint {
+        CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
+    }
+
+    private func distancePointToSegment(_ p: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
+        let abx = b.x - a.x
+        let aby = b.y - a.y
+        let apx = p.x - a.x
+        let apy = p.y - a.y
+        let ab2 = max(0.0001, abx * abx + aby * aby)
+        let t = min(1, max(0, (apx * abx + apy * aby) / ab2))
+        let closest = CGPoint(x: a.x + abx * t, y: a.y + aby * t)
+        return distance(p, closest)
     }
 }
