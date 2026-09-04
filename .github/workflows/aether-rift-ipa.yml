@@ -1,65 +1,67 @@
 name: Build Aether Rift IPA
-
 on:
   push:
-    branches:
-      - aether-rift-moba
-    paths:
-      - 'AetherRift/**'
-      - '.github/workflows/aether-rift-ipa.yml'
+    branches: [aether-rift-moba]
+    paths: ['AetherRift/**', '.github/workflows/aether-rift-ipa.yml']
   workflow_dispatch:
-
+permissions:
+  contents: read
 jobs:
   build-ipa:
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
+      - name: Verify combat rules and simulate a full match
+        run: |
+          swiftc -O AetherRift/Sources3D/ArenaData.swift AetherRift/Sources3D/ArenaSimulation.swift AetherRift/Tests/main.swift -o /tmp/aether-tests
+          /tmp/aether-tests | tee simulation.log
       - name: Install XcodeGen
         run: brew install xcodegen
-
       - name: Generate Xcode project
-        run: |
-          cd AetherRift
-          xcodegen generate
-
-      - name: Build unsigned device app
+        run: cd AetherRift && xcodegen generate
+      - name: Build unsigned iPhone app
         run: |
           set -o pipefail
-          xcodebuild \
-            -project AetherRift/AetherRift.xcodeproj \
-            -scheme AetherRift \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath "$PWD/build" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY='' \
-            build | tee xcodebuild.log
-
+          xcodebuild -project AetherRift/AetherRift.xcodeproj -scheme AetherRift -configuration Release -destination 'generic/platform=iOS' -derivedDataPath "$PWD/build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build > xcodebuild.log 2>&1 || { tail -100 xcodebuild.log; exit 1; }
       - name: Package IPA
         run: |
-          APP_PATH="$PWD/build/Build/Products/Release-iphoneos/AetherRift.app"
-          test -d "$APP_PATH"
-          rm -rf Payload AetherRift-unsigned.ipa
           mkdir -p Payload
-          cp -R "$APP_PATH" Payload/AetherRift.app
-          zip -qry AetherRift-unsigned.ipa Payload
-          ls -lh AetherRift-unsigned.ipa
-
-      - name: Upload IPA
+          cp -R build/Build/Products/Release-iphoneos/AetherRift.app Payload/
+          zip -qry AetherRift-3D-5v5-unsigned.ipa Payload
+      - name: Simulator launch and interaction tests
+        run: |
+          set -o pipefail
+          DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import sys,json; d=json.load(sys.stdin); a=[x for group in d["devices"].values() for x in group if "iPhone" in x["name"]]; p=next((x for x in a if x["name"]=="iPhone 16 Plus"),a[0]); print(p["udid"])')
+          xcodebuild -project AetherRift/AetherRift.xcodeproj -scheme AetherRift -configuration Debug -destination "platform=iOS Simulator,id=$DEVICE" -derivedDataPath "$PWD/simbuild" -resultBundlePath "$PWD/SimulatorTests.xcresult" CODE_SIGNING_ALLOWED=NO test > simulator.log 2>&1 || { tail -100 simulator.log; exit 1; }
+          xcrun simctl boot "$DEVICE" || true
+          xcrun simctl bootstatus "$DEVICE" -b
+          xcrun simctl install "$DEVICE" simbuild/Build/Products/Debug-iphonesimulator/AetherRift.app
+          xcrun simctl launch "$DEVICE" com.rvmendillo.AetherRift --smoke-battle
+          sleep 5
+          xcrun simctl io "$DEVICE" screenshot AetherRift-Battle.png
+          xcrun simctl terminate "$DEVICE" com.rvmendillo.AetherRift
+          xcrun simctl launch "$DEVICE" com.rvmendillo.AetherRift
+          sleep 3
+          xcrun simctl io "$DEVICE" screenshot AetherRift-Heroes.png
+      - name: Upload playable build and previews
         uses: actions/upload-artifact@v4
         with:
-          name: AetherRift-unsigned-IPA
-          path: AetherRift-unsigned.ipa
+          name: AetherRift-3D-5v5
+          path: |
+            AetherRift-3D-5v5-unsigned.ipa
+            AetherRift-Battle.png
+            AetherRift-Heroes.png
+            simulation.log
           if-no-files-found: error
-
-      - name: Upload build log on failure
-        if: failure()
+      - name: Upload diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: AetherRift-build-log
-          path: xcodebuild.log
+          name: AetherRift-diagnostics
+          path: |
+            xcodebuild.log
+            simulator.log
+            simulation.log
+            SimulatorTests.xcresult
           if-no-files-found: ignore
