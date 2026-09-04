@@ -1,0 +1,65 @@
+name: Build Aether Rift IPA
+
+on:
+  push:
+    branches:
+      - aether-rift-moba
+    paths:
+      - 'AetherRift/**'
+      - '.github/workflows/aether-rift-ipa.yml'
+  workflow_dispatch:
+
+jobs:
+  build-ipa:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: |
+          cd AetherRift
+          xcodegen generate
+
+      - name: Build unsigned device app
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project AetherRift/AetherRift.xcodeproj \
+            -scheme AetherRift \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build | tee xcodebuild.log
+
+      - name: Package IPA
+        run: |
+          APP_PATH="$PWD/build/Build/Products/Release-iphoneos/AetherRift.app"
+          test -d "$APP_PATH"
+          rm -rf Payload AetherRift-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/AetherRift.app
+          zip -qry AetherRift-unsigned.ipa Payload
+          ls -lh AetherRift-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: AetherRift-unsigned-IPA
+          path: AetherRift-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AetherRift-build-log
+          path: xcodebuild.log
+          if-no-files-found: ignore
