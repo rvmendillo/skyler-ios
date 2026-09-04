@@ -42,7 +42,7 @@ private struct HeroSelectView: View {
                     Text("AETHER RIFT")
                         .font(.system(size: 28, weight: .black, design: .rounded))
                         .tracking(3)
-                    Text("3-Lane 5v5 Arena • Choose a battle class")
+                    Text("Offline 5v5 • Level 1–15 • Choose your hero class")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -90,7 +90,7 @@ private struct HeroSelectView: View {
                     .padding(.horizontal, 28)
                 }
 
-                Text("Original MOBA map and heroes • optimized for iPhone 16 Plus landscape")
+                Text("Original heroes and battlefield • 3 lanes • jungle • objectives • iPhone 16 Plus landscape")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -152,16 +152,7 @@ private struct MatchView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                HStack {
-                    Button(action: onExit) {
-                        Label("Heroes", systemImage: "chevron.left")
-                            .font(.caption.bold())
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 7)
-                            .background(.black.opacity(0.52), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-
+                HStack(spacing: 8) {
                     Spacer()
 
                     Text(heroClass.rawValue.uppercased())
@@ -170,7 +161,16 @@ private struct MatchView: View {
                         .padding(.vertical, 6)
                         .background(.black.opacity(0.48), in: Capsule())
 
-                    Spacer()
+                    Button {
+                        holder.scene.buyRecommendedItem()
+                    } label: {
+                        Label("BUY", systemImage: "cart.fill")
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(.black.opacity(0.55), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
 
                     Button {
                         holder.scene.restartMatch()
@@ -181,8 +181,18 @@ private struct MatchView: View {
                             .background(.black.opacity(0.52), in: Circle())
                     }
                     .buttonStyle(.plain)
+
+                    Button(action: onExit) {
+                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                            .font(.subheadline.bold())
+                            .padding(8)
+                            .background(.black.opacity(0.52), in: Circle())
+                    }
+                    .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 62)
+                // Upper-left is intentionally left open for the in-game minimap.
+                .padding(.leading, 250)
+                .padding(.trailing, 62)
                 .padding(.top, 10)
 
                 Spacer()
