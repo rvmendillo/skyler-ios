@@ -191,7 +191,7 @@ private struct SkillButton: View {
         Button(action: action) {
             VStack(spacing: 3) {
                 Text("S\(index)")
-                    .font(.caption2.black())
+                    .font(.caption2.weight(.black))
                 Text(title)
                     .font(.system(size: 7, weight: .bold))
                     .multilineTextAlignment(.center)
