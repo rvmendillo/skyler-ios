@@ -1,0 +1,56 @@
+name: Build RuneTamer PR IPA
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'RuneTamerGame/**'
+      - '.github/workflows/build-runetamer-ipa.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: RuneTamerGame
+        run: xcodegen generate
+
+      - name: Build unsigned device app
+        working-directory: RuneTamerGame
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project RuneTamer.xcodeproj \
+            -scheme RuneTamer \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build
+
+      - name: Package IPA
+        working-directory: RuneTamerGame
+        run: |
+          set -euo pipefail
+          APP_PATH='build/Build/Products/Release-iphoneos/RuneTamer.app'
+          test -d "$APP_PATH"
+          rm -rf Payload RuneTamer-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload RuneTamer-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: RuneTamer-unsigned-ipa
+          path: RuneTamerGame/RuneTamer-unsigned.ipa
+          if-no-files-found: error
