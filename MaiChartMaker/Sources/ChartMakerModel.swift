@@ -81,10 +81,13 @@ final class ChartMakerModel: ObservableObject {
                     self.title = result.suggestedTitle
                 }
 
-                self.charts = ChartGenerator.generateAll(analysis: result.analysis)
+                self.charts = TouchChartEnhancer.apply(
+                    to: ChartGenerator.generateAll(analysis: result.analysis),
+                    analysis: result.analysis
+                )
 
                 let soundName = self.selectedInstrumentName
-                self.status = "Exact score loaded • \(self.pianoGameNotes.count) Piano Tiles notes • testing \(soundName). Render MP3 when ready."
+                self.status = "Exact score loaded • touch-aware chart family • \(self.pianoGameNotes.count) Piano Tiles notes • testing \(soundName). Render MP3 when ready."
             }
         }
     }
@@ -211,10 +214,13 @@ final class ChartMakerModel: ObservableObject {
 
     func regenerate() {
         guard let analysis else { return }
-        charts = ChartGenerator.generateAll(analysis: analysis)
+        charts = TouchChartEnhancer.apply(
+            to: ChartGenerator.generateAll(analysis: analysis),
+            analysis: analysis
+        )
         status = analysis.exactScoreTiming
-            ? "Remixed \(charts.count) charts on the exact score grid."
-            : "Remixed \(charts.count) audio-derived charts."
+            ? "Remixed \(charts.count) touch-aware charts on the exact score grid."
+            : "Remixed \(charts.count) touch-aware audio-derived charts."
         if audioURL != nil { prepareExport() }
     }
 
@@ -351,7 +357,8 @@ final class ChartMakerModel: ObservableObject {
         self.detectedFirstBeat = analyzed.analysis.firstBeat
         self.syncOffsetMilliseconds = 0
         self.pianoGameNotes = analyzed.pianoGameNotes
-        self.charts = ChartGenerator.generateAll(
+        self.charts = TouchChartEnhancer.apply(
+            to: ChartGenerator.generateAll(analysis: analyzed.analysis),
             analysis: analyzed.analysis
         )
 
@@ -359,7 +366,7 @@ final class ChartMakerModel: ObservableObject {
         let drumCount = analyzed.analysis.drumBeatPositions.count
 
         status =
-            "Audio chart family ready • \(String(format: "%.1f", analyzed.analysis.bpm)) BPM • \(drumCount) rhythm anchors • \(melodyCount) melody notes • \(charts.count) linked difficulties."
+            "Audio chart family ready • touch notes enabled • \(String(format: "%.1f", analyzed.analysis.bpm)) BPM • \(drumCount) rhythm anchors • \(melodyCount) melody notes • \(charts.count) linked difficulties."
         prepareExport()
     }
 
