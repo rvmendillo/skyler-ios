@@ -1,5 +1,6 @@
 import SwiftUI
 import SpriteKit
+import UIKit
 
 struct ContentView: View {
     @State private var selectedHero: HeroClass?
@@ -13,18 +14,13 @@ struct ContentView: View {
                     selectedHero = nil
                 }
                 .id(hero.id)
-                .transition(.opacity)
             } else {
                 HeroSelectView { hero in
-                    // Use one state mutation for navigation. The SpriteKit scene is created
-                    // by MatchView after the class-selection screen has transitioned away.
                     selectedHero = hero
                 }
-                .transition(.opacity)
             }
         }
-        .ignoresSafeArea(.container, edges: .all)
-        .background(Color.black.ignoresSafeArea())
+        .ignoresSafeArea()
         .preferredColorScheme(.dark)
     }
 }
@@ -100,32 +96,60 @@ private struct HeroSelectView: View {
             }
             .padding(.vertical, 12)
         }
-        .ignoresSafeArea(.container, edges: .all)
+        .ignoresSafeArea()
+    }
+}
+
+private final class SceneHolder: ObservableObject {
+    let scene: GameScene
+
+    init(heroClass: HeroClass) {
+        let scene = GameScene(size: CGSize(width: 932, height: 430), heroClass: heroClass)
+        scene.scaleMode = .resizeFill
+        self.scene = scene
+    }
+}
+
+private struct GameSKView: UIViewRepresentable {
+    let scene: GameScene
+
+    func makeUIView(context: Context) -> SKView {
+        let view = SKView(frame: .zero)
+        view.backgroundColor = .black
+        view.isMultipleTouchEnabled = true
+        view.ignoresSiblingOrder = true
+        view.preferredFramesPerSecond = 60
+        view.shouldCullNonVisibleNodes = true
+        view.presentScene(scene)
+        return view
+    }
+
+    func updateUIView(_ uiView: SKView, context: Context) {
+        if uiView.scene !== scene {
+            uiView.presentScene(scene)
+        }
+    }
+
+    static func dismantleUIView(_ uiView: SKView, coordinator: ()) {
+        uiView.presentScene(nil)
     }
 }
 
 private struct MatchView: View {
     let heroClass: HeroClass
     let onExit: () -> Void
-    @State private var scene: GameScene
+    @StateObject private var holder: SceneHolder
 
     init(heroClass: HeroClass, onExit: @escaping () -> Void) {
         self.heroClass = heroClass
         self.onExit = onExit
-
-        // iPhone 16 Plus is 932×430 points in landscape. resizeFill lets SpriteKit
-        // track the actual SKView bounds and prevents aspect-ratio letterboxing.
-        let newScene = GameScene(size: CGSize(width: 932, height: 430), heroClass: heroClass)
-        newScene.scaleMode = .resizeFill
-        _scene = State(initialValue: newScene)
+        _holder = StateObject(wrappedValue: SceneHolder(heroClass: heroClass))
     }
 
     var body: some View {
         ZStack {
-            SpriteView(scene: scene, preferredFramesPerSecond: 60, options: [.ignoresSiblingOrder])
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .ignoresSafeArea(.container, edges: .all)
-                .background(Color.black.ignoresSafeArea())
+            GameSKView(scene: holder.scene)
+                .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 HStack {
@@ -149,7 +173,7 @@ private struct MatchView: View {
                     Spacer()
 
                     Button {
-                        scene.restartMatch()
+                        holder.scene.restartMatch()
                     } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.subheadline.bold())
@@ -158,8 +182,6 @@ private struct MatchView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                // Keep interactive controls clear of the Dynamic Island / rounded corners,
-                // while the rendered battlefield itself remains edge-to-edge.
                 .padding(.horizontal, 62)
                 .padding(.top, 10)
 
@@ -167,7 +189,7 @@ private struct MatchView: View {
 
                 HStack(alignment: .bottom, spacing: 12) {
                     Joystick { vector in
-                        scene.setMovement(vector)
+                        holder.scene.setMovement(vector)
                     }
 
                     Spacer(minLength: 20)
@@ -179,12 +201,12 @@ private struct MatchView: View {
                                 index: index + 1,
                                 isUltimate: index == 3
                             ) {
-                                scene.castSkill(index)
+                                holder.scene.castSkill(index)
                             }
                         }
 
                         Button {
-                            scene.basicAttack()
+                            holder.scene.basicAttack()
                         } label: {
                             VStack(spacing: 2) {
                                 Image(systemName: "burst.fill")
@@ -200,13 +222,11 @@ private struct MatchView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 62)
+                .padding(.horizontal, 64)
                 .padding(.bottom, 13)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(.container, edges: .all)
-        .background(Color.black.ignoresSafeArea())
+        .ignoresSafeArea()
     }
 }
 
@@ -238,7 +258,6 @@ private struct SkillButton: View {
 private struct Joystick: View {
     let onChange: (CGVector) -> Void
     @State private var knob = CGSize.zero
-
     private let radius: CGFloat = 56
 
     var body: some View {
