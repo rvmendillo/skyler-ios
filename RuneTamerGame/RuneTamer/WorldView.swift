@@ -2,61 +2,30 @@ import SwiftUI
 
 struct WorldView: View {
     @EnvironmentObject var game: GameState
-    @State private var player = CGPoint(x: 0.5, y: 0.62)
-
-    private let monsters: [WorldMonster] = [
-        WorldMonster(id: UUID(), creature: Creature(species: CreatureSpecies.catalog[0], level: 3), x: 0.20, y: 0.30),
-        WorldMonster(id: UUID(), creature: Creature(species: CreatureSpecies.catalog[2], level: 4), x: 0.78, y: 0.28),
-        WorldMonster(id: UUID(), creature: Creature(species: CreatureSpecies.catalog[3], level: 5), x: 0.25, y: 0.77),
-        WorldMonster(id: UUID(), creature: Creature(species: CreatureSpecies.catalog[4], level: 6), x: 0.82, y: 0.72),
-        WorldMonster(id: UUID(), creature: Creature(species: CreatureSpecies.catalog[5], level: 7), x: 0.62, y: 0.46)
-    ]
+    @StateObject private var world = RuneWorld3DController()
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                worldBackground
+        ZStack {
+            RuneWorld3DView(controller: world)
+                .ignoresSafeArea()
 
-                building(title: "Guild", icon: "shield.lefthalf.filled", tint: .indigo)
-                    .position(x: geo.size.width * 0.22, y: geo.size.height * 0.14)
-                building(title: "Rune Shop", icon: "bag.fill", tint: .orange)
-                    .position(x: geo.size.width * 0.76, y: geo.size.height * 0.15)
-
-                ForEach(monsters) { monster in
-                    Button {
-                        game.beginEncounter(monster.creature)
-                    } label: {
-                        VStack(spacing: 2) {
-                            CreatureView(creature: monster.creature, size: 48)
-                            Text("Lv.\(monster.creature.level)")
-                                .font(.caption2.bold())
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(.black.opacity(0.6), in: Capsule())
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .position(x: geo.size.width * monster.x, y: geo.size.height * monster.y)
-                }
-
-                PlayerAvatar()
-                    .position(x: geo.size.width * player.x, y: geo.size.height * player.y)
-                    .animation(.snappy(duration: 0.15), value: player)
-
-                VStack {
-                    HUD()
-                    Spacer()
-                    HStack(alignment: .bottom) {
-                        joystick
-                        Spacer()
-                        actionButtons
-                    }
-                    .padding(.horizontal, 18)
-                    .padding(.bottom, 84)
-                }
-            }
+            LinearGradient(
+                colors: [.black.opacity(0.28), .clear, .clear, .black.opacity(0.25)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
             .ignoresSafeArea()
+            .allowsHitTesting(false)
+
+            VStack(spacing: 0) {
+                topHUD
+                Spacer()
+                bottomHUD
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
         }
+        .onAppear { world.connect(game: game) }
         .sheet(item: $game.encounter) { _ in
             BattleView()
                 .environmentObject(game)
@@ -64,94 +33,195 @@ struct WorldView: View {
         }
     }
 
-    private var worldBackground: some View {
-        ZStack {
-            LinearGradient(colors: [Color(red: 0.11, green: 0.28, blue: 0.18), Color(red: 0.17, green: 0.38, blue: 0.22)], startPoint: .top, endPoint: .bottom)
-            ForEach(0..<16, id: \.self) { i in
-                Circle()
-                    .fill(.green.opacity(0.20))
-                    .frame(width: CGFloat(34 + (i % 4) * 8))
-                    .offset(x: CGFloat((i * 83) % 340) - 170, y: CGFloat((i * 137) % 760) - 380)
-            }
-            RoundedRectangle(cornerRadius: 50)
-                .fill(Color(red: 0.56, green: 0.48, blue: 0.32).opacity(0.55))
-                .frame(width: 95, height: 860)
-                .rotationEffect(.degrees(7))
-        }
-    }
+    private var topHUD: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 10) {
+                RuneTamerBrandMark(compact: true)
 
-    private func building(title: String, icon: String, tint: Color) -> some View {
-        VStack(spacing: 5) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 18).fill(tint.gradient).frame(width: 104, height: 74)
-                Image(systemName: icon).font(.title).foregroundStyle(.white)
-            }
-            Text(title).font(.caption.bold()).foregroundStyle(.white)
-        }
-    }
-
-    private var joystick: some View {
-        ZStack {
-            Circle().fill(.black.opacity(0.35)).frame(width: 116, height: 116)
-            VStack(spacing: 5) {
-                Button { move(dx: 0, dy: -0.06) } label: { Image(systemName: "chevron.up") }
-                HStack(spacing: 28) {
-                    Button { move(dx: -0.06, dy: 0) } label: { Image(systemName: "chevron.left") }
-                    Button { move(dx: 0.06, dy: 0) } label: { Image(systemName: "chevron.right") }
+                HStack(spacing: 9) {
+                    CreatureView(creature: game.activeCreature, size: 44)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Aether Tamer · Lv.\(game.playerLevel)")
+                            .font(.caption.bold())
+                            .foregroundStyle(.white)
+                        ProgressView(value: Double(game.playerHP), total: 100)
+                            .tint(.green)
+                            .frame(width: 142)
+                        Text("HP \(game.playerHP)/100  ·  EXP \(game.exp)/\(game.playerLevel * 100)")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.72))
+                    }
                 }
-                Button { move(dx: 0, dy: 0.06) } label: { Image(systemName: "chevron.down") }
+                .padding(9)
+                .background(.black.opacity(0.34), in: RoundedRectangle(cornerRadius: 15))
+                .overlay(RoundedRectangle(cornerRadius: 15).stroke(.white.opacity(0.12)))
             }
-            .font(.title2.bold()).foregroundStyle(.white)
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 9) {
+                HStack(spacing: 8) {
+                    Label("\(game.coins)", systemImage: "hexagon.fill")
+                    Label("\(game.potions)", systemImage: "cross.vial.fill")
+                }
+                .font(.caption.bold())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 8)
+                .background(.black.opacity(0.34), in: Capsule())
+
+                Text(world.locationName)
+                    .font(.caption2.bold())
+                    .foregroundStyle(.white.opacity(0.9))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.black.opacity(0.28), in: Capsule())
+
+                Text("DRAG WORLD TO ORBIT · PINCH TO ZOOM")
+                    .font(.system(size: 8, weight: .semibold))
+                    .tracking(0.8)
+                    .foregroundStyle(.white.opacity(0.55))
+            }
         }
     }
 
-    private var actionButtons: some View {
-        VStack(spacing: 12) {
-            Button { game.screen = .collection } label: {
-                Image(systemName: "pawprint.fill").frame(width: 54, height: 54).background(.indigo.gradient, in: Circle())
+    private var bottomHUD: some View {
+        HStack(alignment: .bottom) {
+            AnalogJoystick { strafe, forward in
+                world.setMove(strafe: strafe, forward: forward)
+            } onEnded: {
+                world.stopMoving()
             }
-            Button { game.screen = .quests } label: {
-                Image(systemName: "scroll.fill").frame(width: 54, height: 54).background(.orange.gradient, in: Circle())
-            }
-        }
-        .font(.title3.bold()).foregroundStyle(.white)
-    }
 
-    private func move(dx: Double, dy: Double) {
-        player.x = min(0.92, max(0.08, player.x + dx))
-        player.y = min(0.88, max(0.18, player.y + dy))
-        if let near = monsters.first(where: { hypot(player.x - $0.x, player.y - $0.y) < 0.10 }), Int.random(in: 0...2) == 0 {
-            game.beginEncounter(near.creature)
+            Spacer()
+
+            HStack(alignment: .bottom, spacing: 11) {
+                VStack(spacing: 10) {
+                    RoundActionButton(icon: "pawprint.fill", label: "CREATURES", size: 48) {
+                        game.screen = .collection
+                    }
+                    RoundActionButton(icon: "scroll.fill", label: "QUESTS", size: 48) {
+                        game.screen = .quests
+                    }
+                }
+
+                VStack(spacing: 12) {
+                    HStack(spacing: 12) {
+                        RoundActionButton(icon: "figure.run", label: "DASH", size: 54) {
+                            world.dash()
+                        }
+                        RoundActionButton(icon: "arrow.up.circle.fill", label: "JUMP", size: 54) {
+                            world.jump()
+                        }
+                    }
+
+                    Button {
+                        world.primaryAction()
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color.cyan.opacity(0.95), Color.indigo.opacity(0.95)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .frame(width: 78, height: 78)
+                                .overlay(Circle().stroke(.white.opacity(0.65), lineWidth: 2))
+                                .shadow(color: .cyan.opacity(0.32), radius: 12)
+
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 29, weight: .black))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .overlay(alignment: .bottom) {
+                        Text("RUNE STRIKE")
+                            .font(.system(size: 8, weight: .black))
+                            .tracking(0.8)
+                            .foregroundStyle(.white)
+                            .offset(y: 15)
+                    }
+                }
+            }
+            .padding(.bottom, 8)
         }
     }
 }
 
-struct PlayerAvatar: View {
+private struct AnalogJoystick: View {
+    let onChanged: (Float, Float) -> Void
+    let onEnded: () -> Void
+    @State private var knobOffset: CGSize = .zero
+
+    private let radius: CGFloat = 52
+
     var body: some View {
-        VStack(spacing: -3) {
+        ZStack {
+            Circle()
+                .fill(.black.opacity(0.27))
+                .frame(width: radius * 2.2, height: radius * 2.2)
+                .overlay(Circle().stroke(.white.opacity(0.18), lineWidth: 1.5))
+
+            Circle()
+                .fill(.white.opacity(0.16))
+                .frame(width: 58, height: 58)
+                .overlay(Circle().stroke(.white.opacity(0.34), lineWidth: 1.5))
+                .offset(knobOffset)
+        }
+        .contentShape(Circle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    let dx = value.translation.width
+                    let dy = value.translation.height
+                    let length = max(0.001, hypot(dx, dy))
+                    let scale = min(1, radius / length)
+                    let clampedX = dx * scale
+                    let clampedY = dy * scale
+                    knobOffset = CGSize(width: clampedX, height: clampedY)
+                    onChanged(Float(clampedX / radius), Float(-clampedY / radius))
+                }
+                .onEnded { _ in
+                    withAnimation(.spring(response: 0.22, dampingFraction: 0.72)) {
+                        knobOffset = .zero
+                    }
+                    onEnded()
+                }
+        )
+        .accessibilityLabel("Movement joystick")
+    }
+}
+
+private struct RoundActionButton: View {
+    let icon: String
+    let label: String
+    let size: CGFloat
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
             ZStack {
-                Circle().fill(.pink.opacity(0.9)).frame(width: 34, height: 34)
-                Image(systemName: "person.fill").foregroundStyle(.white)
-            }
-            Capsule().fill(.blue.gradient).frame(width: 36, height: 28)
-        }
-        .shadow(radius: 5)
-    }
-}
+                Circle()
+                    .fill(.black.opacity(0.34))
+                    .frame(width: size, height: size)
+                    .overlay(Circle().stroke(.white.opacity(0.28), lineWidth: 1.5))
+                    .background(.ultraThinMaterial.opacity(0.35), in: Circle())
 
-struct HUD: View {
-    @EnvironmentObject var game: GameState
-    var body: some View {
-        HStack(spacing: 10) {
-            CreatureView(creature: game.activeCreature, size: 52)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack { Text("Tamer Lv.\(game.playerLevel)").bold(); Spacer(); Label("\(game.coins)", systemImage: "circle.hexagongrid.fill") }
-                ProgressView(value: Double(game.playerHP), total: 100).tint(.green)
-                Text("HP \(game.playerHP)/100 • EXP \(game.exp)/\(game.playerLevel * 100)").font(.caption2).foregroundStyle(.white.opacity(0.75))
+                Image(systemName: icon)
+                    .font(.system(size: size * 0.36, weight: .bold))
+                    .foregroundStyle(.white)
             }
         }
-        .padding(10)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
-        .padding(.top, 52).padding(.horizontal, 12)
+        .buttonStyle(.plain)
+        .overlay(alignment: .bottom) {
+            Text(label)
+                .font(.system(size: 7, weight: .black))
+                .tracking(0.6)
+                .foregroundStyle(.white.opacity(0.86))
+                .offset(y: 12)
+        }
     }
 }
