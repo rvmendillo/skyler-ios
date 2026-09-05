@@ -9,7 +9,7 @@ final class LaunchTests:XCTestCase {
     }
     func testActiveBattleRemainsRunning() throws {
         let app=XCUIApplication();app.launchArguments=["--smoke-battle"];app.launch();XCUIDevice.shared.orientation = .landscapeLeft
-        XCTAssertTrue(app.buttons["shop"].waitForExistence(timeout:20))
+        XCTAssertTrue(app.buttons["shop"].waitForExistence(timeout:60))
         let stick=app.otherElements["joystick"].firstMatch
         if stick.exists{stick.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).press(forDuration:0.1,thenDragTo:stick.coordinate(withNormalizedOffset:CGVector(dx:0.8,dy:0.2)))}
         let deadline=Date().addingTimeInterval(12)

@@ -4,9 +4,9 @@ import UIKit
 
 @main struct AetherRiftApp:App {var body:some Scene {WindowGroup {ArenaRoot().preferredColorScheme(.dark)}}}
 @MainActor final class BattleSession:NSObject,ObservableObject {
-    let game:ArenaSimulation;let renderer=ArenaRenderer();@Published var revision=0;@Published var finished=false;var display:CADisplayLink?;var lastTime:CFTimeInterval=0;var hudTime:Double=0;var recorded=false;var haptics=true
+    let game:ArenaSimulation;let renderer:ArenaRenderer;@Published var revision=0;@Published var finished=false;var display:CADisplayLink?;var lastTime:CFTimeInterval=0;var hudTime:Double=0;var recorded=false;var haptics=true
     private let impact=UIImpactFeedbackGenerator(style:.light);private let notification=UINotificationFeedbackGenerator()
-    init(hero:Int,difficulty:Difficulty,spell:BattleSpell,practice:Bool){game=ArenaSimulation(hero:hero,difficulty:difficulty,spell:spell,practice:practice);super.init();renderer.cameraPoint=game.player.p
+    init(hero:Int,difficulty:Difficulty,spell:BattleSpell,practice:Bool,renderer:ArenaRenderer){self.renderer=renderer;game=ArenaSimulation(hero:hero,difficulty:difficulty,spell:spell,practice:practice);super.init();renderer.cameraPoint=game.player.p
         if ProcessInfo.processInfo.arguments.contains("--smoke-battle") {
             game.time=90;game.nextIncome=91;game.nextWave=120;game.spawnWave()
             for h in game.heroes {game.gain(h,xp:1800,gold:2000);game.autoLearn(h);_=game.buy(Armory.build(for:h.def.role)[0],for:h);h.hp=h.maxHP;h.p=h.team==0 ? V2(45+Double(h.id%3),46+Double(h.id%3)):V2(56+Double(h.id%3),54+Double(h.id%3))}
@@ -36,9 +36,10 @@ private let gold=Color(red:0.86,green:0.72,blue:0.45)
 private let cyan=Color(red:0.32,green:0.81,blue:0.96)
 extension View {func panel()->some View{self.background(ink.opacity(0.94),in:RoundedRectangle(cornerRadius:12)).overlay(RoundedRectangle(cornerRadius:12).stroke(gold.opacity(0.27),lineWidth:1))}}
 struct ArenaRoot:View {
-    @State var hero=4;@State var role:Role?;@State var difficulty:Difficulty = .standard;@State var spell:BattleSpell = .flicker;@State var practice=false;@State var match:BattleSession?;@State var help=false
+    @State var hero=4;@State var role:Role?;@State var difficulty:Difficulty = .standard;@State var spell:BattleSpell = .flicker;@State var practice=false;@State var match:BattleSession?;@State var help=false;@State var loading=false
     var body:some View{
         ZStack {ink.ignoresSafeArea();if let session=match {ArenaMatch(session:session){session.stop();match=nil}}
+            else if loading {VStack(spacing:16){ProgressView().tint(cyan).scaleEffect(1.4);Text("PREPARING THE RIFT").font(.system(size:18,weight:.black,design:.serif)).tracking(3);Text("Building terrain, lighting and hero models…").font(.caption).foregroundColor(.secondary)}.accessibilityIdentifier("battle-loading")}
             else {GeometryReader{geo in
                 let s=min(geo.size.width/932,geo.size.height/430)
                 ZStack {
@@ -61,13 +62,24 @@ struct ArenaRoot:View {
                             ForEach(0..<3){i in let a=Roster.heroes[hero].abilities[i];HStack(alignment:.top,spacing:7){Image(systemName:a.icon).frame(width:22).foregroundColor(gold);VStack(alignment:.leading,spacing:2){Text(a.name).font(.system(size:10,weight:.bold));Text(a.detail).font(.system(size:8)).foregroundColor(.white.opacity(0.5))}}}
                             HStack{Text("AI").font(.system(size:9,weight:.bold));Picker("Difficulty",selection:$difficulty){ForEach(Difficulty.allCases,id:\.self){Text($0.rawValue).tag($0)}}.tint(gold);Spacer();Toggle("Practice",isOn:$practice).font(.system(size:9)).toggleStyle(.switch).scaleEffect(0.8)}
                             HStack(spacing:5){ForEach(BattleSpell.allCases,id:\.self){item in Button{spell=item}label:{VStack(spacing:3){Image(systemName:item.icon);Text(item.rawValue).font(.system(size:7))}.frame(width:56,height:38).foregroundColor(spell==item ? gold:.white.opacity(0.5)).background(.white.opacity(spell==item ? 0.10:0.03),in:RoundedRectangle(cornerRadius:6))}.buttonStyle(.plain)}}
-                            Button{match=BattleSession(hero:hero,difficulty:difficulty,spell:spell,practice:practice)}label:{HStack{Text("ENTER THE RIFT").tracking(1.2);Image(systemName:"arrow.right")}.font(.system(size:12,weight:.black)).frame(maxWidth:.infinity).frame(height:43).background(LinearGradient(colors:[gold,Color(red:0.65,green:0.46,blue:0.23)],startPoint:.topLeading,endPoint:.bottomTrailing),in:RoundedRectangle(cornerRadius:8)).foregroundColor(ink)}.buttonStyle(.plain).accessibilityIdentifier("start-match")
+                            Button{beginMatch()}label:{HStack{Text("ENTER THE RIFT").tracking(1.2);Image(systemName:"arrow.right")}.font(.system(size:12,weight:.black)).frame(maxWidth:.infinity).frame(height:43).background(LinearGradient(colors:[gold,Color(red:0.65,green:0.46,blue:0.23)],startPoint:.topLeading,endPoint:.bottomTrailing),in:RoundedRectangle(cornerRadius:8)).foregroundColor(ink)}.buttonStyle(.plain).accessibilityIdentifier("start-match")
                         }.frame(width:255).padding(.trailing,40)
                     }
                 }.frame(width:932,height:430).scaleEffect(s).frame(width:geo.size.width,height:geo.size.height)
             }.ignoresSafeArea()}
         }.ignoresSafeArea().statusBarHidden().sheet(isPresented:$help){GuideView()}
-        .onAppear{if ProcessInfo.processInfo.arguments.contains("--smoke-battle"){match=BattleSession(hero:4,difficulty:.standard,spell:.flicker,practice:false)}}
+        .onAppear{if ProcessInfo.processInfo.arguments.contains("--smoke-battle") && match==nil && !loading {beginMatch()}}
+    }
+    func beginMatch(){
+        guard !loading else{return};loading=true
+        let choice=hero,ai=difficulty,battleSpell=spell,isPractice=practice
+        Task { @MainActor in
+            // Build an unpublished scene off the UI thread. It is only used by the
+            // main actor after construction finishes, so no scene nodes are shared
+            // with a running renderer while being mutated.
+            let renderer=await Task.detached(priority:.userInitiated){ArenaRenderer()}.value
+            match=BattleSession(hero:choice,difficulty:ai,spell:battleSpell,practice:isPractice,renderer:renderer);loading=false
+        }
     }
     func roleChip(_ r:Role?)->some View {Button{role=r}label:{Image(systemName:r?.icon ?? "square.grid.2x2.fill").font(.system(size:11)).frame(width:36,height:28).background(role==r ? gold.opacity(0.25):.white.opacity(0.04),in:RoundedRectangle(cornerRadius:5)).foregroundColor(role==r ? gold:.white.opacity(0.55))}.buttonStyle(.plain)}
 }
@@ -80,7 +92,7 @@ struct ArenaMatch:View {
             BattlefieldView(session:session).ignoresSafeArea()
             GeometryReader{geo in let s=min(geo.size.width/932,geo.size.height/430)
                 ZStack {
-                    MiniMap(game:g,onPan:{session.renderer.panPoint=$0},onPing:{g.ping($0)}).frame(width:140,height:140).position(x:113,y:96)
+                    MiniMap(game:g,onPan:{session.renderer.panPoint=$0},onPing:{g.ping($0)}).frame(width:140,height:140).position(x:125,y:96)
                     HStack(spacing:12){Text("\(g.heroes.filter{$0.team==0}.reduce(0){$0+$1.kills})").foregroundColor(cyan);Text(String(format:"%02d:%02d",Int(g.time)/60,Int(g.time)%60)).font(.system(size:13,weight:.medium,design:.monospaced));Text("\(g.heroes.filter{$0.team==1}.reduce(0){$0+$1.kills})").foregroundColor(.pink)}.font(.system(size:20,weight:.bold)).padding(.horizontal,22).padding(.vertical,5).panel().position(x:466,y:24)
                     Button{scoreboard=true}label:{HStack(spacing:7){Image(systemName:"list.bullet.rectangle");Text("\(g.player.kills) / \(g.player.deaths) / \(g.player.assists)").monospacedDigit()}.font(.system(size:11,weight:.bold)).padding(8).panel()}.buttonStyle(.plain).position(x:696,y:25)
                     Button{settings=true;session.pause(true)}label:{Image(systemName:"gearshape.fill").frame(width:33,height:30).panel()}.buttonStyle(.plain).position(x:880,y:25).accessibilityIdentifier("settings")
