@@ -92,6 +92,7 @@ enum BattleSpell: String, CaseIterable { case flicker = "Flicker", sprint = "Spr
     var cooldown:Double { switch self { case .flicker:return 120; case .sprint:return 90; case .purify:return 90; case .retribution:return 35 } }
 }
 enum Difficulty: String, CaseIterable { case casual = "Casual", standard = "Standard", veteran = "Veteran" }
+enum TargetPriority:String,CaseIterable {case lowestHealth="Lowest HP",lowestPercent="Lowest HP %",closest="Closest"}
 struct Rock { let position: V2; let radius: Double }
 enum Battlefield {
     static let bases=[V2(8,8),V2(92,92)]

@@ -17,4 +17,14 @@ final class LaunchTests:XCTestCase {
         XCTAssertEqual(app.state,.runningForeground)
         let shot=XCTAttachment(screenshot:app.screenshot());shot.name="Active 5v5 Battle";shot.lifetime = .keepAlways;add(shot)
     }
+    func testHeroSwitchAndControlSettings() throws {
+        let app=XCUIApplication();app.launch();XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.buttons["hero-0"].waitForExistence(timeout:20));app.buttons["hero-0"].tap()
+        XCTAssertTrue(app.staticTexts["Warden of the Dawn"].exists)
+        app.buttons["hero-3"].tap();XCTAssertTrue(app.staticTexts["Astral Arcanist"].exists)
+        app.buttons["start-match"].tap();XCTAssertTrue(app.buttons["shop"].waitForExistence(timeout:20))
+        app.buttons["settings"].tap();XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout:10))
+        XCTAssertTrue(app.switches["Approach targets while holding Attack"].exists)
+        app.buttons["Resume"].tap();XCTAssertTrue(app.buttons["shop"].exists)
+    }
 }

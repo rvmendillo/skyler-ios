@@ -33,6 +33,7 @@ struct DelayedBlast {let source:Int;let point:V2;var delay:Double;let power:Doub
 
 final class ArenaSimulation {
     var units:[ArenaUnit]=[]; var time:Double=0;var winner:Int?;var playerID=0;var movement=V2.zero;var aim:V2?;var aimingSkill:Int?;var attacking=false;var attackMode=0;var selectedTarget:Int?;var paused=false
+    var targetPriority:TargetPriority = .lowestPercent;var attackAssist=true
     var events:[ArenaEvent]=[];var effects:[CombatFX]=[];var missiles:[Missile]=[];var blasts:[DelayedBlast]=[];var sounds:[String]=[];var message="Welcome to Aether Rift";var messageUntil:Double=5
     var difficulty:Difficulty;var practice:Bool;var autoplay=false;var nextWave:Double=8;var nextIncome:Double=1;var nextID=0;var fxID=0;var eventID=0;var seed:UInt64=1234567;var pingPoint:V2?;var pingUntil:Double=0;var pingMode=0
     init(hero:Int,difficulty:Difficulty = .standard,spell:BattleSpell = .flicker,practice:Bool=false) {
@@ -90,7 +91,7 @@ final class ArenaSimulation {
         guard u.gold>=Double(cost),u.items.count<6 || replacement != nil,!u.items.contains(id) else{if u.id==playerID{message="Need gold, a free slot, or an unowned item";messageUntil=time+2};return false}
         // A hero can carry only one pair of boots; an owned component can be upgraded.
         if item.group == .movement && u.items.contains(where:{Armory.items[$0].group == .movement && $0 != item.component}) {return false}
-        let before=u.maxHP;if let index=replacement {u.items.remove(at:index)};u.items.append(id);u.gold-=Double(cost);u.hp+=max(0,u.maxHP-before)
+        let before=u.maxHP,wasAlive=u.alive;if let index=replacement {u.items.remove(at:index)};u.items.append(id);u.gold-=Double(cost);if wasAlive{u.hp+=max(0,u.maxHP-before)}
         if u.id==playerID{sound("purchase");message="Purchased \(item.name)";messageUntil=time+2};return true
     }
     func sell(_ slot:Int) {guard player.items.indices.contains(slot) else{return};let id=player.items.remove(at:slot);player.gold+=Double(Armory.items[id].cost)*0.60;player.hp=min(player.hp,player.maxHP);sound("purchase")}
@@ -103,9 +104,9 @@ final class ArenaSimulation {
         if u.id != playerID || autoplay {autoLearn(u)}
     }
     func move(_ u:ArenaUnit,direction:V2,dt:Double) {
-        guard u.stun<=0,u.alive,direction.length>0.05 else{return};let delta=direction.normalized*u.speed*dt;let next=u.p+delta
+        guard u.stun<=0,u.alive,direction.length>0.05 else{return};let delta=direction.normalized*min(1,direction.length)*u.speed*dt;let next=u.p+delta
         if Battlefield.walkable(next){u.p=next}else if Battlefield.walkable(u.p+V2(delta.x,0)){u.p.x+=delta.x}else if Battlefield.walkable(u.p+V2(0,delta.y)){u.p.y+=delta.y}
-        u.facing=direction.normalized
+        u.facing=direction.normalized;u.recall=0
     }
     func walk(_ u:ArenaUnit,to p:V2,dt:Double) {
         let dir=(p-u.p).normalized
@@ -129,7 +130,8 @@ final class ArenaSimulation {
     func cast(_ index:Int,by u:ArenaUnit,direction:V2?=nil) {
         guard (0...2).contains(index),u.alive,u.stun<=0,u.ranks[index]>0,u.cooldowns[index]<=0 else{return}
         let spec=u.def.abilities[index];let cost=spec.mana*(u.blueBuff>0 ? 0.65:1);guard u.mana>=cost else{if u.id==playerID{message="Not enough mana";messageUntil=time+1.5};return}
-        let nearest=enemies(of:u,range:spec.range+3).filter{!$0.structure}.min{$0.p.distance(u.p)<$1.p.distance(u.p)}
+        let locked=u.id==playerID ? selectedTarget.flatMap{unit($0)}.flatMap{target in target.alive && target.team != u.team && !target.structure && visible(target,to:u.team) && target.p.distance(u.p)<=spec.range ? target:nil}:nil
+        let nearest=locked ?? enemies(of:u,range:spec.range).filter{!$0.structure}.min{$0.p.distance(u.p)<$1.p.distance(u.p)}
         let dir=(direction ?? nearest.map{($0.p-u.p).normalized} ?? u.facing).normalized
         if spec.kind == .execute && nearest == nil {return}
         u.mana-=cost;u.cooldowns[index]=spec.cooldown*(1-u.cdr);u.facing=dir;u.recall=0;u.revealed=2;u.attackPose=0.4
@@ -161,7 +163,7 @@ final class ArenaSimulation {
         }
     }
     func attack(_ u:ArenaUnit,_ target:ArenaUnit) {
-        guard u.alive,target.alive,u.attackTimer<=0,u.stun<=0,target.p.distance(u.p)<=u.range+0.7 else{return}
+        guard u.alive,target.alive,target.team != u.team,u.attackTimer<=0,u.stun<=0,target.p.distance(u.p)<=u.range+0.7 else{return}
         if target.structure && !vulnerable(target){return}
         u.attackTimer=u.attackInterval;u.facing=(target.p-u.p).normalized;u.recall=0;u.conceal=0;u.revealed=2;u.hits+=1;u.attackPose=0.27
         var power=u.attack;var critical=false
@@ -177,13 +179,14 @@ final class ArenaSimulation {
         if u.id==playerID {sound("attack")}
     }
     func damage(_ target:ArenaUnit,amount:Double,source:ArenaUnit,magic:Bool,trueDamage:Bool=false) {
-        guard target.alive,winner==nil else{return};if target.structure && !vulnerable(target){return}
+        guard target.alive,target.team != source.team,winner==nil else{return};if target.structure && !vulnerable(target){return}
         let defense=max(0,(magic ? target.resist:target.armor)-source.stat(\.penetration));var dealt=max(0,amount)*(trueDamage ? 1:120/(120+defense))
         if target.structure && !units.contains(where:{$0.team==source.team && $0.alive && !$0.isHero && !$0.structure && !$0.neutral && $0.p.distance(target.p)<9}){dealt*=0.25}
         if practice && target.id==playerID {dealt*=0.25}
         let absorbed=min(target.shield,dealt);target.shield-=absorbed;dealt-=absorbed;target.hp-=dealt;target.attackedAt=time;target.recall=0;target.regenerate=0;target.revealed=2.5;target.attackPose=max(target.attackPose,0.08)
         if source.isHero{target.attackers[source.id]=time;source.dealt+=dealt;if !magic && !target.structure {let steal=source.stat(\.lifesteal)+(source.def.role == .fighter ? 0.10:0);source.hp=min(source.maxHP,source.hp+dealt*steal)}}
         fx("damage",target.p,target.p,source.team,dealt,0.65)
+        if target.p.distance(player.p)<18 {fx("impact",target.p,target.p,source.team,0,0.22)}
         if target.isHero && source.isHero {for tower in units where tower.structure && tower.team==target.team && tower.alive && tower.p.distance(source.p)<tower.range{tower.target=source.id}}
         if target.hp<=0 {kill(target,by:source)}
     }
@@ -227,7 +230,7 @@ final class ArenaSimulation {
                 if u.recall>0 {u.recall-=dt;if u.recall<=0{u.p=Battlefield.bases[u.team];fx("blink",u.p,u.p,u.team);if u.id==playerID{sound("recall")}};continue}
                 if u.cycloning>0 {u.cycloning-=dt;u.cycleTick-=dt;if u.cycleTick<=0 {for t in enemies(of:u,range:5.5) where !t.structure{damage(t,amount:u.damageBuff/8,source:u,magic:false)};fx("nova",u.p,u.p,u.team,5,0.35);u.cycleTick=0.5}}
                 if u.def.role == .support {for h in heroes where h.team==u.team && h.alive && time-h.attackedAt>5 && h.p.distance(u.p)<7{h.hp=min(h.maxHP,h.hp+dt*12)}}
-                if u.id==playerID && !autoplay {if movement.length>0.05{move(u,direction:movement,dt:dt)};if attacking {playerAttack(u)}}else{bot(u,dt:dt)}
+                if u.id==playerID && !autoplay {if movement.length>0.05{move(u,direction:movement,dt:dt)};if attacking {playerAttack(u,dt:dt)}}else{bot(u,dt:dt)}
             }else if u.structure {towerAI(u)}else if u.neutral{neutralAI(u,dt:dt)}else{minionAI(u,dt:dt)}
         }
         updateMissiles(dt)
@@ -235,15 +238,35 @@ final class ArenaSimulation {
         for var blast in blasts {blast.delay-=dt;if blast.delay<=0 {if let source=unit(blast.source){for t in units where t.alive && t.team != source.team && !t.structure && t.p.distance(blast.point)<3.8{damage(t,amount:blast.power,source:source,magic:true);if t.immunity<=0{t.stun=max(t.stun,0.5)}};fx("meteor",blast.point,blast.point,source.team,3.8,0.65)}}else{remaining.append(blast)}};blasts=remaining
         units.removeAll{!$0.alive && !$0.isHero && !$0.structure && !$0.neutral}
     }
-    func playerAttack(_ u:ArenaUnit){
-        var candidates=enemies(of:u,range:u.range+1)
-        if attackMode==1 {candidates=candidates.filter{!$0.isHero && !$0.structure}}
-        if attackMode==2 {candidates=candidates.filter{$0.structure}}
-        let locked=selectedTarget.flatMap{unit($0)}.flatMap{$0.alive && visible($0,to:u.team) && $0.p.distance(u.p)<=u.range+0.7 ? $0:nil}
-        let target=locked ?? candidates.sorted{a,b in
-            if attackMode==0 && a.isHero != b.isHero{return a.isHero};if a.structure != b.structure{return !a.structure};return a.hp/a.maxHP < b.hp/b.maxHP
+    func attackTarget(for u:ArenaUnit,range:Double)->ArenaUnit? {
+        let candidates=enemies(of:u,range:range).filter{target in
+            if target.structure && !vulnerable(target){return false}
+            if attackMode==1{return !target.isHero && !target.structure}
+            if attackMode==2{return target.structure}
+            return true
+        }
+        if let id=selectedTarget,let locked=candidates.first(where:{$0.id==id}) {return locked}
+        return candidates.sorted{a,b in
+            if attackMode==0 && a.isHero != b.isHero{return a.isHero}
+            if a.structure != b.structure{return !a.structure}
+            switch targetPriority {
+            case .lowestHealth:if a.hp != b.hp{return a.hp<b.hp}
+            case .lowestPercent:if a.hp/a.maxHP != b.hp/b.maxHP{return a.hp/a.maxHP<b.hp/b.maxHP}
+            case .closest:break
+            }
+            return a.p.distance(u.p)<b.p.distance(u.p)
         }.first
-        if let target=target {attack(u,target)}
+    }
+    func playerAttack(_ u:ArenaUnit,dt:Double=0) {
+        let reach=u.range+(attackAssist && movement.length<=0.05 ? 4:0.7)
+        guard let target=attackTarget(for:u,range:reach) else{return}
+        if target.p.distance(u.p)>u.range+0.5 && attackAssist && movement.length<=0.05 {walk(u,to:target.p,dt:dt)}
+        attack(u,target)
+    }
+    func lockTarget(_ id:Int?) {
+        guard let id=id else{selectedTarget=nil;return}
+        guard let target=unit(id),target.isHero,target.team != player.team,target.alive,visible(target,to:player.team),target.p.distance(player.p)<=20 else{return}
+        selectedTarget=selectedTarget==id ? nil:id
     }
     func spawnWave(){for team in 0...1 {for lane in 0...2 {for i in 0..<3 {let siege=i==2;let kind:UnitKind=siege ? .siege : i==1 ? .caster:.melee;let hp=(siege ? 650.0:420.0)*(1+time/900);let u=add(kind,team,Battlefield.bases[team]+V2(Double(i)*0.6,Double(i)*0.5),hp,lane:lane);if !units.contains(where:{$0.team != team && $0.kind == .tower && $0.lane==lane && $0.tier==3 && $0.alive}){u.baseHP*=1.6;u.hp=u.baseHP}}}}}
     func minionAI(_ u:ArenaUnit,dt:Double) {
@@ -263,6 +286,12 @@ final class ArenaSimulation {
     }
     func bot(_ u:ArenaUnit,dt:Double) {
         if u.stun>0{return}
+        // Do not chase a hero under a live turret without a minion wave.
+        if let threat=units.first(where:{$0.structure && $0.alive && $0.team != u.team && $0.p.distance(u.p)<$0.range+0.5}),
+           !units.contains(where:{$0.alive && $0.team==u.team && !$0.isHero && !$0.structure && !$0.neutral && $0.p.distance(threat.p)<threat.range}),
+           u.hp/u.maxHP<0.85 || threat.target==u.id {
+            u.target=nil;walk(u,to:u.p+(u.p-threat.p).normalized*6,dt:dt);return
+        }
         if u.hp/u.maxHP<0.24 || (u.p.distance(Battlefield.bases[u.team])<7 && u.hp/u.maxHP<0.86) {walk(u,to:Battlefield.bases[u.team],dt:dt);if u.hp/u.maxHP<0.18 && u.spellCD<=0 && u.spell == .flicker {castSpell(u,dir:Battlefield.bases[u.team]-u.p)};return}
         u.aiTimer-=dt
         if u.aiTimer<=0 {
