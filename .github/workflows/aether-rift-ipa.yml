@@ -42,7 +42,7 @@ jobs:
           xcrun simctl install "$DEVICE" simbuild/Build/Products/Release-iphonesimulator/AetherRift.app
           xcrun simctl terminate "$DEVICE" com.rvmendillo.AetherRift || true
           xcrun simctl launch "$DEVICE" com.rvmendillo.AetherRift --smoke-battle
-          sleep 10
+          sleep 2
           xcrun simctl io "$DEVICE" screenshot AetherRift-Battle.png
           xcrun simctl terminate "$DEVICE" com.rvmendillo.AetherRift
           xcrun simctl launch "$DEVICE" com.rvmendillo.AetherRift

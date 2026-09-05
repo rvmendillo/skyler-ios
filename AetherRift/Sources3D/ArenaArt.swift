@@ -118,7 +118,8 @@ extension ArenaRenderer {
             _=box(0.07,0.18,0.16,leather,SCNVector3(0,-0.04,0.05),weapon,bevel:0.02)
         } else if def.role == .marksman {
             for i in 0..<16 {let a=Float(i)*Float.pi/16-Float.pi/2,b=Float(i+1)*Float.pi/16-Float.pi/2
-                let rod=cylinder(0.025,CGFloat(hypot(sin(b)-sin(a),cos(b)-cos(a)))*0.73,trim,SCNVector3(0,(sin(a)+sin(b))*0.365,(cos(a)+cos(b))*0.22),weapon);rod.eulerAngles.x = (a+b)/2
+                let dy=(sin(b)-sin(a))*0.73,dz=(cos(b)-cos(a))*0.44
+                let rod=cylinder(0.025,CGFloat(hypot(dy,dz)),trim,SCNVector3(0,(sin(a)+sin(b))*0.365,(cos(a)+cos(b))*0.22),weapon);rod.eulerAngles.x = atan2(dz,dy)
             }
             _=box(0.009,1.46,0.009,UIColor(rgb:0xC8DCE0),SCNVector3Zero,weapon,bevel:0)
             _=box(0.015,0.015,0.8,leather,SCNVector3(0,0,0.18),weapon,bevel:0)
@@ -182,7 +183,7 @@ extension ArenaRenderer {
         }}
         _=line(V2(-6,106),V2(106,-6),width:9.0,color:UIColor(rgb:0x536B58),parent:batch,height:-0.005)
         let waterGeo=SCNPlane(width:7,height:158);waterGeo.widthSegmentCount=8;waterGeo.heightSegmentCount=90
-        let water=mesh(waterGeo,UIColor(rgb:0x176D72),SCNVector3(50,0.035,-50),world,metal:0.22);water.eulerAngles=SCNVector3(-Float.pi/2,0,Float.pi/4)
+        let water=mesh(waterGeo,UIColor(rgb:0x176D72),SCNVector3(50,0.035,-50),world,metal:0.22);water.eulerAngles=SCNVector3(-Float.pi/2,Float.pi/4,0)
         waterGeo.firstMaterial?.roughness.contents=0.21
         waterGeo.shaderModifiers=[.geometry:"_geometry.position.z += sin(_geometry.position.y * 0.75 + u_time * 1.1) * 0.045 + cos(_geometry.position.x * 1.8 + u_time) * 0.022;",.surface:"float ripple = sin(_surface.diffuseTexcoord.y * 320.0 + u_time * 1.6 + sin(_surface.diffuseTexcoord.x * 23.0)) * 0.035; _surface.diffuse.rgb += float3(ripple, ripple * 1.5, ripple * 1.7);"]
         for p in [V2(12,88),V2(50,50),V2(88,12)] {
