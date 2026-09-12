@@ -9,23 +9,36 @@ struct GameRootView: View {
             Board3DView()
                 .ignoresSafeArea()
 
-            VStack(spacing: 12) {
-                HStack {
+            LinearGradient(
+                colors: [Color.black.opacity(0.34), .clear, Color.black.opacity(0.30)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+
+            VStack(spacing: 10) {
+                HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("SOFTWARE LIFE")
                             .font(.caption.bold())
                             .tracking(2)
-                        Text("Era: \(game.era.rawValue) • Turn \(game.turn)")
+                        Text("\(game.era.rawValue)  •  Turn \(game.turn)")
                             .font(.subheadline.weight(.semibold))
                     }
                     Spacer()
-                    if game.lastRoll > 0 {
-                        Label("\(game.lastRoll)", systemImage: "dice.fill")
-                            .font(.title3.bold())
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(game.board[game.currentPlayer.position].title)
+                            .font(.caption.bold())
+                        if game.lastRoll > 0 {
+                            Label("Last roll \(game.lastRoll)", systemImage: "dice.fill")
+                                .font(.caption2.weight(.semibold))
+                        }
                     }
                 }
+                .foregroundStyle(.white)
                 .padding(14)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+                .background(.ultraThinMaterial.opacity(0.88), in: RoundedRectangle(cornerRadius: 20))
 
                 Spacer()
 
@@ -34,10 +47,10 @@ struct GameRootView: View {
                 Button {
                     game.rollAndAdvance()
                 } label: {
-                    Label("Roll & Live", systemImage: "dice")
+                    Label("Roll & Move", systemImage: "dice")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 15)
+                        .padding(.vertical, 14)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -58,33 +71,40 @@ private struct PlayerHUD: View {
     let player: Player
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Text(player.name)
-                    .font(.title3.bold())
+                    .font(.headline.bold())
                 Spacer()
                 Text("Legacy \(player.legacyScore.formatted())")
                     .font(.caption.bold())
             }
 
-            HStack(spacing: 18) {
+            HStack(spacing: 14) {
                 Stat(label: "Cash", value: "₱\(player.cash.formatted())")
-                Stat(label: "Net worth", value: "₱\(player.netWorth.formatted())")
-                Stat(label: "Wellbeing", value: "\(player.wellbeing)")
+                Stat(label: "Worth", value: "₱\(player.netWorth.formatted())")
+                Stat(label: "Health", value: "\(player.wellbeing)")
+                Stat(label: "Skill", value: "\(player.skill)")
                 Stat(label: "Rep", value: "\(player.reputation)")
             }
         }
-        .padding(16)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22))
+        .padding(14)
+        .background(.regularMaterial.opacity(0.92), in: RoundedRectangle(cornerRadius: 20))
     }
 
     private struct Stat: View {
         let label: String
         let value: String
+
         var body: some View {
             VStack(alignment: .leading, spacing: 2) {
-                Text(label).font(.caption2).foregroundStyle(.secondary)
-                Text(value).font(.caption.bold()).lineLimit(1)
+                Text(label)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.caption.bold())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
         }
     }
@@ -98,48 +118,246 @@ private struct Board3DView: View {
             let root = Entity()
             root.name = "SoftwareLifeBoard"
 
-            let floor = ModelEntity(
-                mesh: .generateBox(size: [9.5, 0.12, 9.5]),
-                materials: [SimpleMaterial(color: .darkGray, roughness: 0.9, isMetallic: false)]
-            )
-            floor.position.y = -0.12
-            root.addChild(floor)
+            addTabletop(to: root)
+            addTrack(to: root)
+            addScenery(to: root)
+            addMarketDial(to: root)
+            addStartAndFinish(to: root)
 
             for (index, tile) in game.board.enumerated() {
-                let position = tilePosition(index: index, count: game.board.count)
-                let block = ModelEntity(
-                    mesh: .generateBox(size: [1.6, 0.18, 1.6]),
-                    materials: [SimpleMaterial(color: tileColor(tile.kind), roughness: 0.65, isMetallic: false)]
-                )
-                block.position = position
-                block.name = "tile-\(tile.id)"
-                root.addChild(block)
+                let position = BoardGeometry.position(for: index)
+                let tileEntity = makeTile(tile: tile, index: index)
+                tileEntity.position = position + SIMD3<Float>(0, 0.13, 0)
+                root.addChild(tileEntity)
             }
 
             for (index, player) in game.players.enumerated() {
                 let pawn = HumanPawn.make(index: index)
                 pawn.name = "player-\(player.id.uuidString)"
-                let base = tilePosition(index: player.position, count: game.board.count)
-                pawn.position = base + SIMD3<Float>(Float(index) * 0.18 - 0.25, 0.20, 0)
+                let base = BoardGeometry.position(for: player.position)
+                pawn.position = base + pawnOffset(index: index)
                 root.addChild(pawn)
             }
 
-            root.orientation = simd_quatf(angle: -.pi / 10, axis: [1, 0, 0])
+            // A tilted tabletop perspective keeps the whole journey visible on iPhone.
+            root.orientation = simd_quatf(angle: -.pi / 9, axis: [1, 0, 0])
+            root.scale = SIMD3<Float>(repeating: 0.94)
             content.add(root)
         } update: { content in
             guard let root = content.entities.first(where: { $0.name == "SoftwareLifeBoard" }) else { return }
+
             for (index, player) in game.players.enumerated() {
                 guard let pawn = root.findEntity(named: "player-\(player.id.uuidString)") else { continue }
-                let base = tilePosition(index: player.position, count: game.board.count)
-                pawn.position = base + SIMD3<Float>(Float(index) * 0.18 - 0.25, 0.20, 0)
+                let target = BoardGeometry.position(for: player.position) + pawnOffset(index: index)
+                var transform = pawn.transform
+                transform.translation = target
+                pawn.move(to: transform, relativeTo: root, duration: 0.55, timingFunction: .easeInOut)
             }
         }
     }
 
-    private func tilePosition(index: Int, count: Int) -> SIMD3<Float> {
-        let perimeter = max(count, 4)
-        let angle = Float(index) / Float(perimeter) * Float.pi * 2
-        return SIMD3<Float>(cos(angle) * 3.5, 0, sin(angle) * 3.5)
+    private func addTabletop(to root: Entity) {
+        let boardBase = ModelEntity(
+            mesh: .generateBox(size: [8.9, 0.16, 8.9]),
+            materials: [SimpleMaterial(color: UIColor(red: 0.16, green: 0.34, blue: 0.22, alpha: 1), roughness: 0.95, isMetallic: false)]
+        )
+        boardBase.position.y = -0.14
+        root.addChild(boardBase)
+
+        let innerBoard = ModelEntity(
+            mesh: .generateBox(size: [8.55, 0.05, 8.55]),
+            materials: [SimpleMaterial(color: UIColor(red: 0.36, green: 0.57, blue: 0.34, alpha: 1), roughness: 0.9, isMetallic: false)]
+        )
+        innerBoard.position.y = -0.03
+        root.addChild(innerBoard)
+
+        // Raised frame gives it the silhouette of a physical board game.
+        let frameMaterial = SimpleMaterial(color: UIColor(red: 0.12, green: 0.10, blue: 0.08, alpha: 1), roughness: 0.75, isMetallic: false)
+        let top = ModelEntity(mesh: .generateBox(size: [9.15, 0.24, 0.18]), materials: [frameMaterial])
+        top.position = [0, -0.02, -4.52]
+        root.addChild(top)
+        let bottom = ModelEntity(mesh: .generateBox(size: [9.15, 0.24, 0.18]), materials: [frameMaterial])
+        bottom.position = [0, -0.02, 4.52]
+        root.addChild(bottom)
+        let left = ModelEntity(mesh: .generateBox(size: [0.18, 0.24, 9.15]), materials: [frameMaterial])
+        left.position = [-4.52, -0.02, 0]
+        root.addChild(left)
+        let right = ModelEntity(mesh: .generateBox(size: [0.18, 0.24, 9.15]), materials: [frameMaterial])
+        right.position = [4.52, -0.02, 0]
+        root.addChild(right)
+    }
+
+    private func addTrack(to root: Entity) {
+        let roadMaterial = SimpleMaterial(color: UIColor(white: 0.91, alpha: 1), roughness: 0.9, isMetallic: false)
+        guard game.board.count > 1 else { return }
+
+        for index in 0..<(game.board.count - 1) {
+            let a = BoardGeometry.position(for: index)
+            let b = BoardGeometry.position(for: index + 1)
+            let dx = b.x - a.x
+            let dz = b.z - a.z
+            let length = sqrt(dx * dx + dz * dz)
+            let connector = ModelEntity(mesh: .generateBox(size: [length, 0.05, 0.40]), materials: [roadMaterial])
+            connector.position = [(a.x + b.x) / 2, 0.035, (a.z + b.z) / 2]
+            connector.orientation = simd_quatf(angle: -atan2(dz, dx), axis: [0, 1, 0])
+            root.addChild(connector)
+        }
+    }
+
+    private func makeTile(tile: BoardTile, index: Int) -> Entity {
+        let root = Entity()
+        root.name = "tile-\(tile.id)"
+
+        let block = ModelEntity(
+            mesh: .generateBox(size: [1.03, 0.18, 0.74]),
+            materials: [SimpleMaterial(color: tileColor(tile.kind), roughness: 0.55, isMetallic: false)]
+        )
+        root.addChild(block)
+
+        let inset = ModelEntity(
+            mesh: .generateBox(size: [0.82, 0.025, 0.53]),
+            materials: [SimpleMaterial(color: UIColor.white.withAlphaComponent(0.22), roughness: 0.7, isMetallic: false)]
+        )
+        inset.position.y = 0.105
+        root.addChild(inset)
+
+        let marker: ModelEntity
+        switch tile.kind {
+        case .career, .property, .sideProject:
+            marker = ModelEntity(mesh: .generateBox(size: [0.16, 0.13, 0.16]), materials: [SimpleMaterial(color: .white, roughness: 0.6, isMetallic: false)])
+        case .startup, .market, .event:
+            marker = ModelEntity(mesh: .generateSphere(radius: 0.09), materials: [SimpleMaterial(color: .white, roughness: 0.5, isMetallic: false)])
+        case .skill, .openSource, .aiFrontier, .wellbeing:
+            marker = ModelEntity(mesh: .generateBox(size: [0.11, 0.17, 0.11]), materials: [SimpleMaterial(color: .white, roughness: 0.55, isMetallic: false)])
+        }
+        marker.position = [0, 0.20, 0]
+        root.addChild(marker)
+
+        if index == 0 || index == game.board.count - 1 {
+            let beacon = ModelEntity(mesh: .generateSphere(radius: 0.10), materials: [SimpleMaterial(color: .white, roughness: 0.3, isMetallic: true)])
+            beacon.position = [0, 0.38, 0]
+            root.addChild(beacon)
+        }
+
+        return root
+    }
+
+    private func addScenery(to root: Entity) {
+        addBuilding(to: root, position: [-3.82, 0, 2.35], height: 0.70, color: .systemIndigo)
+        addBuilding(to: root, position: [3.78, 0, 2.45], height: 1.05, color: .systemBlue)
+        addBuilding(to: root, position: [3.82, 0, -2.35], height: 0.82, color: .systemOrange)
+        addBuilding(to: root, position: [-3.80, 0, -2.30], height: 0.92, color: .systemPurple)
+        addBuilding(to: root, position: [2.55, 0, 0.80], height: 0.65, color: .systemTeal)
+        addBuilding(to: root, position: [-2.55, 0, -0.80], height: 0.72, color: .systemPink)
+
+        addTree(to: root, position: [-3.75, 0, 0.78])
+        addTree(to: root, position: [-3.35, 0, 0.72])
+        addTree(to: root, position: [3.70, 0, -0.78])
+        addTree(to: root, position: [3.30, 0, -0.72])
+        addTree(to: root, position: [1.80, 0, 0.78])
+        addTree(to: root, position: [-1.80, 0, -0.78])
+    }
+
+    private func addBuilding(to root: Entity, position: SIMD3<Float>, height: Float, color: UIColor) {
+        let building = Entity()
+        let body = ModelEntity(
+            mesh: .generateBox(size: [0.46, height, 0.46]),
+            materials: [SimpleMaterial(color: color, roughness: 0.55, isMetallic: false)]
+        )
+        body.position.y = height / 2
+        building.addChild(body)
+
+        let roof = ModelEntity(
+            mesh: .generateBox(size: [0.54, 0.07, 0.54]),
+            materials: [SimpleMaterial(color: UIColor.white.withAlphaComponent(0.85), roughness: 0.5, isMetallic: false)]
+        )
+        roof.position.y = height + 0.035
+        building.addChild(roof)
+
+        building.position = position
+        root.addChild(building)
+    }
+
+    private func addTree(to root: Entity, position: SIMD3<Float>) {
+        let tree = Entity()
+        let trunk = ModelEntity(
+            mesh: .generateBox(size: [0.09, 0.28, 0.09]),
+            materials: [SimpleMaterial(color: .brown, roughness: 0.95, isMetallic: false)]
+        )
+        trunk.position.y = 0.14
+        tree.addChild(trunk)
+
+        let crown = ModelEntity(
+            mesh: .generateSphere(radius: 0.18),
+            materials: [SimpleMaterial(color: UIColor(red: 0.12, green: 0.48, blue: 0.20, alpha: 1), roughness: 0.9, isMetallic: false)]
+        )
+        crown.position.y = 0.39
+        tree.addChild(crown)
+        tree.position = position
+        root.addChild(tree)
+    }
+
+    private func addMarketDial(to root: Entity) {
+        let dialRoot = Entity()
+        dialRoot.position = [0, 0, 0.80]
+
+        let base = ModelEntity(
+            mesh: .generateCylinder(height: 0.10, radius: 0.48),
+            materials: [SimpleMaterial(color: UIColor(red: 0.15, green: 0.18, blue: 0.24, alpha: 1), roughness: 0.55, isMetallic: true)]
+        )
+        base.position.y = 0.06
+        dialRoot.addChild(base)
+
+        let colors: [UIColor] = [.systemBlue, .systemOrange, .systemGreen, .systemPurple, .systemRed, .systemTeal, .systemPink, .systemYellow]
+        for i in 0..<8 {
+            let angle = Float(i) / 8 * Float.pi * 2
+            let peg = ModelEntity(
+                mesh: .generateSphere(radius: 0.07),
+                materials: [SimpleMaterial(color: colors[i], roughness: 0.45, isMetallic: false)]
+            )
+            peg.position = [cos(angle) * 0.34, 0.15, sin(angle) * 0.34]
+            dialRoot.addChild(peg)
+        }
+
+        let pointer = ModelEntity(
+            mesh: .generateBox(size: [0.38, 0.045, 0.06]),
+            materials: [SimpleMaterial(color: .white, roughness: 0.3, isMetallic: true)]
+        )
+        pointer.position = [0.15, 0.18, 0]
+        pointer.orientation = simd_quatf(angle: .pi / 5, axis: [0, 1, 0])
+        dialRoot.addChild(pointer)
+        root.addChild(dialRoot)
+    }
+
+    private func addStartAndFinish(to root: Entity) {
+        addGate(to: root, at: BoardGeometry.position(for: 0), color: .systemGreen)
+        addGate(to: root, at: BoardGeometry.position(for: game.board.count - 1), color: .systemYellow)
+    }
+
+    private func addGate(to root: Entity, at position: SIMD3<Float>, color: UIColor) {
+        let gate = Entity()
+        let material = SimpleMaterial(color: color, roughness: 0.55, isMetallic: false)
+        let left = ModelEntity(mesh: .generateBox(size: [0.08, 0.60, 0.08]), materials: [material])
+        left.position = [-0.46, 0.30, 0]
+        gate.addChild(left)
+        let right = ModelEntity(mesh: .generateBox(size: [0.08, 0.60, 0.08]), materials: [material])
+        right.position = [0.46, 0.30, 0]
+        gate.addChild(right)
+        let bar = ModelEntity(mesh: .generateBox(size: [1.00, 0.09, 0.09]), materials: [material])
+        bar.position = [0, 0.59, 0]
+        gate.addChild(bar)
+        gate.position = position
+        root.addChild(gate)
+    }
+
+    private func pawnOffset(index: Int) -> SIMD3<Float> {
+        let offsets: [SIMD3<Float>] = [
+            [-0.25, 0.35, -0.13],
+            [0.25, 0.35, -0.13],
+            [-0.25, 0.35, 0.14],
+            [0.25, 0.35, 0.14]
+        ]
+        return offsets[index % offsets.count]
     }
 
     private func tileColor(_ kind: TileKind) -> UIColor {
@@ -158,6 +376,26 @@ private struct Board3DView: View {
     }
 }
 
+private enum BoardGeometry {
+    static let positions: [SIMD3<Float>] = {
+        let xs: [Float] = [-3.25, -1.95, -0.65, 0.65, 1.95, 3.25]
+        let zs: [Float] = [3.20, 1.60, 0.00, -1.60, -3.20]
+        var result: [SIMD3<Float>] = []
+
+        for (row, z) in zs.enumerated() {
+            let rowXs = row.isMultiple(of: 2) ? xs : Array(xs.reversed())
+            for x in rowXs {
+                result.append([x, 0, z])
+            }
+        }
+        return result
+    }()
+
+    static func position(for index: Int) -> SIMD3<Float> {
+        positions[index % positions.count]
+    }
+}
+
 private enum HumanPawn {
     static func make(index: Int) -> Entity {
         let root = Entity()
@@ -165,22 +403,38 @@ private enum HumanPawn {
         let color = colors[index % colors.count]
         let skin = SimpleMaterial(color: UIColor(red: 0.82, green: 0.64, blue: 0.50, alpha: 1), roughness: 0.8, isMetallic: false)
         let clothing = SimpleMaterial(color: color, roughness: 0.7, isMetallic: false)
+        let dark = SimpleMaterial(color: UIColor(white: 0.12, alpha: 1), roughness: 0.85, isMetallic: false)
 
-        let torso = ModelEntity(mesh: .generateBox(size: [0.24, 0.36, 0.14]), materials: [clothing])
-        torso.position.y = 0.28
+        let torso = ModelEntity(mesh: .generateBox(size: [0.22, 0.32, 0.14]), materials: [clothing])
+        torso.position.y = 0.31
         root.addChild(torso)
 
-        let head = ModelEntity(mesh: .generateSphere(radius: 0.12), materials: [skin])
-        head.position.y = 0.57
+        let head = ModelEntity(mesh: .generateSphere(radius: 0.11), materials: [skin])
+        head.position.y = 0.56
         root.addChild(head)
 
-        let legLeft = ModelEntity(mesh: .generateBox(size: [0.08, 0.28, 0.09]), materials: [clothing])
-        legLeft.position = [-0.07, 0.04, 0]
+        let hair = ModelEntity(mesh: .generateSphere(radius: 0.115), materials: [dark])
+        hair.scale = [1, 0.42, 1]
+        hair.position.y = 0.615
+        root.addChild(hair)
+
+        let legLeft = ModelEntity(mesh: .generateBox(size: [0.075, 0.25, 0.085]), materials: [clothing])
+        legLeft.position = [-0.06, 0.08, 0]
         root.addChild(legLeft)
 
-        let legRight = ModelEntity(mesh: .generateBox(size: [0.08, 0.28, 0.09]), materials: [clothing])
-        legRight.position = [0.07, 0.04, 0]
+        let legRight = ModelEntity(mesh: .generateBox(size: [0.075, 0.25, 0.085]), materials: [clothing])
+        legRight.position = [0.06, 0.08, 0]
         root.addChild(legRight)
+
+        let armLeft = ModelEntity(mesh: .generateBox(size: [0.055, 0.25, 0.065]), materials: [skin])
+        armLeft.position = [-0.15, 0.31, 0]
+        armLeft.orientation = simd_quatf(angle: 0.13, axis: [0, 0, 1])
+        root.addChild(armLeft)
+
+        let armRight = ModelEntity(mesh: .generateBox(size: [0.055, 0.25, 0.065]), materials: [skin])
+        armRight.position = [0.15, 0.31, 0]
+        armRight.orientation = simd_quatf(angle: -0.13, axis: [0, 0, 1])
+        root.addChild(armRight)
 
         return root
     }
