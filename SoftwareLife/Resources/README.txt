@@ -1,0 +1,1 @@
+Software Life resources directory. Future 3D models, audio, textures, and localized game data live here.
