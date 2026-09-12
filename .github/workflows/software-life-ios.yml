@@ -9,13 +9,16 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install Tuist
-        run: curl -Ls https://install.tuist.io | bash
+        run: |
+          brew update
+          brew install tuist
+          tuist version
 
       - name: Generate Xcode project
         working-directory: SoftwareLife
@@ -41,6 +44,7 @@ jobs:
         run: |
           APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
           test -n "$APP_PATH"
+          rm -rf Payload
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
           ditto -c -k --sequesterRsrc --keepParent Payload SoftwareLife-unsigned.ipa
