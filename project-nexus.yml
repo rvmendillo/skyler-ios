@@ -56,6 +56,7 @@ targets:
       - NexusApp/V8FastChatConformance.swift
       - NexusApp/V8FastFiles.swift
       - NexusApp/V8Root.swift
+      - NexusApp/V9Imports.swift
       - NexusApp/V9Core.swift
       - NexusApp/V9Documents.swift
       - NexusApp/V9Assistant.swift
