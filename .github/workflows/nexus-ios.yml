@@ -9,6 +9,10 @@ on:
       - '.github/workflows/nexus-ios.yml'
   workflow_dispatch:
 
+concurrency:
+  group: nexus-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: macos-26
