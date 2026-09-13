@@ -138,47 +138,116 @@ struct NexusAnimatedStoryScene: View {
     var body: some View {
         GeometryReader { geo in
             SwiftUI.TimelineView(PeriodicTimelineSchedule(from: Date(), by: 1.0 / 30.0)) { timeline in
-                let t = timeline.date.timeIntervalSinceReferenceDate
-                ZStack {
-                    LinearGradient(colors: palette, startPoint: .topLeading, endPoint: .bottomTrailing)
-                    Circle().fill(.white.opacity(0.10)).frame(width: geo.size.width * 0.72).offset(x: geo.size.width * 0.34 + sin(t * 0.18) * 15, y: -geo.size.height * 0.28)
-                    ForEach(0..<6, id: \.self) { i in
-                        Image(systemName: i % 2 == 0 ? "sparkles" : "star.fill")
-                            .foregroundStyle(.white.opacity(0.45 + Double(i % 3) * 0.12))
-                            .font(.system(size: CGFloat(12 + i * 3)))
-                            .offset(x: CGFloat(sin(t * (0.22 + Double(i) * 0.03) + Double(i)) * Double(geo.size.width * 0.42)),
-                                    y: CGFloat(cos(t * 0.16 + Double(i) * 1.7) * Double(geo.size.height * 0.30)))
-                    }
-                    RoundedRectangle(cornerRadius: 60)
-                        .fill(.white.opacity(0.12))
-                        .frame(width: geo.size.width * 1.2, height: 125)
-                        .offset(y: geo.size.height * 0.42)
-
-                    NexusBuddyCharacter(variant: page.accentIndex, mood: .happy, phase: t * 2.1)
-                        .offset(x: -geo.size.width * 0.23, y: geo.size.height * 0.17 + CGFloat(sin(t * 2.1) * 7))
-                        .rotationEffect(.degrees(sin(t * 1.4) * 2.5))
-                    NexusBuddyCharacter(variant: page.accentIndex + 1, mood: .curious, phase: t * 1.8 + 2)
-                        .scaleEffect(0.82)
-                        .offset(x: geo.size.width * 0.25, y: geo.size.height * 0.23 + CGFloat(cos(t * 1.8) * 6))
-                        .rotationEffect(.degrees(-sin(t * 1.1) * 3))
-
-                    VStack {
-                        HStack {
-                            Label(page.subtitle, systemImage: page.symbol).font(.caption.bold()).foregroundStyle(.white.opacity(0.88))
-                            Spacer()
-                            Text("NEXUS STORY").font(.caption2.black()).tracking(1.4).foregroundStyle(.white.opacity(0.72))
-                        }
-                        Spacer()
-                    }.padding(18)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 28))
+                NexusStorySceneFrame(
+                    page: page,
+                    size: geo.size,
+                    time: timeline.date.timeIntervalSinceReferenceDate,
+                    palette: palette
+                )
             }
         }
     }
 
     private var palette: [Color] {
-        let options: [[Color]] = [[.blue,.purple],[.mint,.blue],[.orange,.pink],[.indigo,.cyan],[.green,.teal],[.purple,.pink]]
+        let options: [[Color]] = [[.blue, .purple], [.mint, .blue], [.orange, .pink], [.indigo, .cyan], [.green, .teal], [.purple, .pink]]
         return options[abs(page.accentIndex) % options.count]
+    }
+}
+
+private struct NexusStorySceneFrame: View {
+    let page: NexusStoryPage
+    let size: CGSize
+    let time: TimeInterval
+    let palette: [Color]
+
+    var body: some View {
+        ZStack {
+            sceneBackground
+            floatingStars
+            sceneGround
+            animatedCharacters
+            sceneHeader
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 28))
+    }
+
+    private var sceneBackground: some View {
+        ZStack {
+            LinearGradient(colors: palette, startPoint: .topLeading, endPoint: .bottomTrailing)
+            Circle()
+                .fill(.white.opacity(0.10))
+                .frame(width: size.width * 0.72)
+                .offset(
+                    x: size.width * 0.34 + CGFloat(sin(time * 0.18) * 15.0),
+                    y: -size.height * 0.28
+                )
+        }
+    }
+
+    private var floatingStars: some View {
+        ForEach(0..<6, id: \.self) { i in
+            star(index: i)
+        }
+    }
+
+    private func star(index: Int) -> some View {
+        let value = Double(index)
+        let symbol = index % 2 == 0 ? "sparkles" : "star.fill"
+        let opacity = 0.45 + Double(index % 3) * 0.12
+        let fontSize = CGFloat(12 + index * 3)
+        let speed = 0.22 + value * 0.03
+        let xTravel = Double(size.width * 0.42)
+        let yTravel = Double(size.height * 0.30)
+        let x = CGFloat(sin(time * speed + value) * xTravel)
+        let y = CGFloat(cos(time * 0.16 + value * 1.7) * yTravel)
+
+        return Image(systemName: symbol)
+            .foregroundStyle(.white.opacity(opacity))
+            .font(.system(size: fontSize))
+            .offset(x: x, y: y)
+    }
+
+    private var sceneGround: some View {
+        RoundedRectangle(cornerRadius: 60)
+            .fill(.white.opacity(0.12))
+            .frame(width: size.width * 1.2, height: 125)
+            .offset(y: size.height * 0.42)
+    }
+
+    private var animatedCharacters: some View {
+        ZStack {
+            NexusBuddyCharacter(variant: page.accentIndex, mood: .happy, phase: time * 2.1)
+                .offset(
+                    x: -size.width * 0.23,
+                    y: size.height * 0.17 + CGFloat(sin(time * 2.1) * 7.0)
+                )
+                .rotationEffect(.degrees(sin(time * 1.4) * 2.5))
+
+            NexusBuddyCharacter(variant: page.accentIndex + 1, mood: .curious, phase: time * 1.8 + 2.0)
+                .scaleEffect(0.82)
+                .offset(
+                    x: size.width * 0.25,
+                    y: size.height * 0.23 + CGFloat(cos(time * 1.8) * 6.0)
+                )
+                .rotationEffect(.degrees(-sin(time * 1.1) * 3.0))
+        }
+    }
+
+    private var sceneHeader: some View {
+        VStack {
+            HStack {
+                Label(page.subtitle, systemImage: page.symbol)
+                    .font(.caption.bold())
+                    .foregroundStyle(.white.opacity(0.88))
+                Spacer()
+                Text("NEXUS STORY")
+                    .font(.caption2.weight(.black))
+                    .tracking(1.4)
+                    .foregroundStyle(.white.opacity(0.72))
+            }
+            Spacer()
+        }
+        .padding(18)
     }
 }
 
