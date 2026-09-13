@@ -217,8 +217,8 @@ extension NexusModel {
             .filter { !$0.key.isEmpty && $0.key.count < 90 }
             .sorted { $0.value.count > $1.value.count }
         return groups.prefix(12).enumerated().map { index, item in
-            let name = item.element.key
-            let values = item.element.value
+            let name = item.key
+            let values = item.value
             let kinds = Set(values.map { $0.kind.rawValue }).sorted().joined(separator: ", ")
             return NexusStoryPage(id: "person-\(name)", title: name, subtitle: "A recurring social thread", body: "\(name) appears in \(values.count) captured social signals spanning \(kinds). Visibility in an export does not by itself prove closeness, sentiment or relationship quality, but it does show that this label is structurally important in the current social graph.", evidence: journeyEvidence(values), symbol: "person.crop.circle.fill", accentIndex: index)
         }
