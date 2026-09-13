@@ -37,12 +37,25 @@ final class DeviceConnectorHub: NSObject, ObservableObject, CLLocationManagerDel
 
     private func loadContacts() async -> [KnowledgeRecord] {
         do { _ = try await contacts.requestAccess(for: .contacts) } catch { return [] }
-        let keys: [CNKeyDescriptor] = [CNContactGivenNameKey as CNKeyDescriptor, CNContactFamilyNameKey as CNKeyDescriptor, CNContactOrganizationNameKey as CNKeyDescriptor, CNContactIdentifierKey as CNKeyDescriptor]
+        let keys: [CNKeyDescriptor] = [
+            CNContactGivenNameKey as CNKeyDescriptor,
+            CNContactFamilyNameKey as CNKeyDescriptor,
+            CNContactOrganizationNameKey as CNKeyDescriptor,
+            CNContactIdentifierKey as CNKeyDescriptor
+        ]
         let req = CNContactFetchRequest(keysToFetch: keys)
         var result: [KnowledgeRecord] = []
         try? contacts.enumerateContacts(with: req) { c, _ in
             let name = [c.givenName, c.familyName].filter { !$0.isEmpty }.joined(separator: " ")
-            result.append(.init(id: "contact-\(c.identifier)", source: "Contacts", kind: .contact, timestamp: nil, title: name.isEmpty ? c.organizationName : name, text: c.organizationName, metadata: [:]))
+            result.append(.init(
+                id: "contact-\(c.identifier)",
+                source: "Contacts",
+                kind: .contact,
+                timestamp: nil,
+                title: name.isEmpty ? c.organizationName : name,
+                text: c.organizationName,
+                metadata: [:]
+            ))
         }
         return result
     }
@@ -52,7 +65,15 @@ final class DeviceConnectorHub: NSObject, ObservableObject, CLLocationManagerDel
         let start = Calendar.current.date(byAdding: .year, value: -2, to: Date())!
         let end = Calendar.current.date(byAdding: .year, value: 1, to: Date())!
         return events.events(matching: events.predicateForEvents(withStart: start, end: end, calendars: nil)).map { e in
-            .init(id: "event-\(e.eventIdentifier ?? UUID().uuidString)", source: "Calendar", kind: .event, timestamp: e.startDate, title: e.title ?? "Event", text: e.notes ?? "", metadata: ["calendar": e.calendar.title])
+            .init(
+                id: "event-\(e.eventIdentifier ?? UUID().uuidString)",
+                source: "Calendar",
+                kind: .event,
+                timestamp: e.startDate,
+                title: e.title ?? "Event",
+                text: e.notes ?? "",
+                metadata: ["calendar": e.calendar.title]
+            )
         }
     }
 
@@ -61,7 +82,15 @@ final class DeviceConnectorHub: NSObject, ObservableObject, CLLocationManagerDel
         return await withCheckedContinuation { cont in
             events.fetchReminders(matching: events.predicateForReminders(in: nil)) { reminders in
                 let out = (reminders ?? []).map { r in
-                    KnowledgeRecord(id: "reminder-\(r.calendarItemIdentifier)", source: "Reminders", kind: .reminder, timestamp: r.dueDateComponents?.date, title: r.title, text: r.notes ?? "", metadata: ["completed": r.isCompleted.description])
+                    KnowledgeRecord(
+                        id: "reminder-\(r.calendarItemIdentifier)",
+                        source: "Reminders",
+                        kind: .reminder,
+                        timestamp: r.dueDateComponents?.date,
+                        title: r.title,
+                        text: r.notes ?? "",
+                        metadata: ["completed": r.isCompleted.description]
+                    )
                 }
                 cont.resume(returning: out)
             }
@@ -76,29 +105,69 @@ final class DeviceConnectorHub: NSObject, ObservableObject, CLLocationManagerDel
         let limit = min(fetch.count, 5000)
         for i in 0..<limit {
             let a = fetch.object(at: i)
-            out.append(.init(id: "photo-\(a.localIdentifier)", source: "Photos", kind: .media, timestamp: a.creationDate, title: a.mediaType == .video ? "Video" : "Photo", text: "", metadata: ["favorite": a.isFavorite.description, "width": "\(a.pixelWidth)", "height": "\(a.pixelHeight)"]))
+            out.append(.init(
+                id: "photo-\(a.localIdentifier)",
+                source: "Photos",
+                kind: .media,
+                timestamp: a.creationDate,
+                title: a.mediaType == .video ? "Video" : "Photo",
+                text: "",
+                metadata: [
+                    "favorite": a.isFavorite.description,
+                    "width": "\(a.pixelWidth)",
+                    "height": "\(a.pixelHeight)"
+                ]
+            ))
         }
         return out
     }
 
     private func loadHealth() async -> [KnowledgeRecord] {
         guard HKHealthStore.isHealthDataAvailable() else { return [] }
-        var types = Set<HKObjectType>()
-        if let t = HKObjectType.quantityType(forIdentifier: .stepCount) { types.insert(t) }
-        if let t = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned) { types.insert(t) }
-        if let t = HKObjectType.quantityType(forIdentifier: .heartRate) { types.insert(t) }
-        if let t = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) { types.insert(t) }
-        do { try await health.requestAuthorization(toShare: [], read: types) } catch { return [] }
+
+        var sampleTypes: [HKSampleType] = []
+        var readTypes = Set<HKObjectType>()
+
+        func add(_ type: HKSampleType?) {
+            guard let type else { return }
+            sampleTypes.append(type)
+            readTypes.insert(type)
+        }
+
+        add(HKObjectType.quantityType(forIdentifier: .stepCount))
+        add(HKObjectType.quantityType(forIdentifier: .activeEnergyBurned))
+        add(HKObjectType.quantityType(forIdentifier: .heartRate))
+        add(HKObjectType.categoryType(forIdentifier: .sleepAnalysis))
+
+        do {
+            try await health.requestAuthorization(toShare: [], read: readTypes)
+        } catch {
+            return []
+        }
+
         var out: [KnowledgeRecord] = []
-        for type in types {
+        for type in sampleTypes {
             let samples: [HKSample] = await withCheckedContinuation { cont in
-                let q = HKSampleQuery(sampleType: type, predicate: nil, limit: 1000, sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]) { _, samples, _ in
+                let q = HKSampleQuery(
+                    sampleType: type,
+                    predicate: nil,
+                    limit: 1000,
+                    sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
+                ) { _, samples, _ in
                     cont.resume(returning: samples ?? [])
                 }
                 health.execute(q)
             }
             out += samples.map { s in
-                .init(id: "health-\(s.uuid.uuidString)", source: "Apple Health", kind: .health, timestamp: s.startDate, title: type.identifier, text: healthValue(s), metadata: [:])
+                .init(
+                    id: "health-\(s.uuid.uuidString)",
+                    source: "Apple Health",
+                    kind: .health,
+                    timestamp: s.startDate,
+                    title: type.identifier,
+                    text: healthValue(s),
+                    metadata: [:]
+                )
             }
         }
         return out
@@ -116,13 +185,29 @@ final class DeviceConnectorHub: NSObject, ObservableObject, CLLocationManagerDel
         }
         guard status == .authorized else { return [] }
         return (MPMediaQuery.songs().items ?? []).prefix(5000).map { item in
-            .init(id: "music-\(item.persistentID)", source: "Music Library", kind: .music, timestamp: item.releaseDate, title: item.title ?? "Track", text: [item.artist, item.albumTitle].compactMap { $0 }.joined(separator: " — "), metadata: [:])
+            .init(
+                id: "music-\(item.persistentID)",
+                source: "Music Library",
+                kind: .music,
+                timestamp: item.releaseDate,
+                title: item.title ?? "Track",
+                text: [item.artist, item.albumTitle].compactMap { $0 }.joined(separator: " — "),
+                metadata: [:]
+            )
         }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let l = locations.last else { return }
-        pendingLocation?([.init(id: "location-\(Int(l.timestamp.timeIntervalSince1970))", source: "Location", kind: .location, timestamp: l.timestamp, title: "Current location sample", text: "\(l.coordinate.latitude), \(l.coordinate.longitude)", metadata: ["accuracy": "\(l.horizontalAccuracy)"])])
+        pendingLocation?([.init(
+            id: "location-\(Int(l.timestamp.timeIntervalSince1970))",
+            source: "Location",
+            kind: .location,
+            timestamp: l.timestamp,
+            title: "Current location sample",
+            text: "\(l.coordinate.latitude), \(l.coordinate.longitude)",
+            metadata: ["accuracy": "\(l.horizontalAccuracy)"]
+        )])
         pendingLocation = nil
     }
 
