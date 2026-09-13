@@ -1,0 +1,61 @@
+name: Build REYDL IPA
+
+on:
+  push:
+    branches: [reydl-download-manager]
+    paths:
+      - 'ReyDL/**'
+      - '.github/workflows/build-reydl-ipa.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ReyDL
+        run: xcodegen generate
+
+      - name: Build unsigned device app
+        working-directory: ReyDL
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ReyDL.xcodeproj \
+            -scheme ReyDL \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build
+
+      - name: Verify extension and package IPA
+        working-directory: ReyDL
+        run: |
+          set -euo pipefail
+          APP_PATH='build/Build/Products/Release-iphoneos/ReyDL.app'
+          test -d "$APP_PATH"
+          test -d "$APP_PATH/PlugIns/ReyDLExtension.appex"
+          test -f "$APP_PATH/PlugIns/ReyDLExtension.appex/manifest.json"
+          rm -rf Payload REYDL-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload REYDL-unsigned.ipa
+          shasum -a 256 REYDL-unsigned.ipa | tee REYDL-unsigned.sha256
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: REYDL-unsigned-ipa
+          path: |
+            ReyDL/REYDL-unsigned.ipa
+            ReyDL/REYDL-unsigned.sha256
+          if-no-files-found: error
