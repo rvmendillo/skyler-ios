@@ -1,0 +1,111 @@
+name: Build NEXUS IPA
+
+on:
+  push:
+    branches: [nexus-build]
+    paths:
+      - 'NexusApp/**'
+      - 'project-nexus.yml'
+      - '.github/workflows/nexus-ios.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode and iOS SDK
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i ios || true
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate branded app icon
+        run: |
+          python3 - <<'PY'
+          import struct,zlib,math,os
+          N=1024
+          rows=[]
+          def near_segment(x,y,x1,y1,x2,y2,w):
+              vx,vy=x2-x1,y2-y1; wx,wy=x-x1,y-y1
+              c1=wx*vx+wy*vy
+              if c1<=0: dx,dy=x-x1,y-y1
+              else:
+                  c2=vx*vx+vy*vy
+                  if c2<=c1: dx,dy=x-x2,y-y2
+                  else:
+                      b=c1/c2; px=x1+b*vx; py=y1+b*vy; dx,dy=x-px,y-py
+              return dx*dx+dy*dy <= w*w
+          for y in range(N):
+              row=bytearray([0])
+              for x in range(N):
+                  t=(x+y)/(2*(N-1)); r=int(3+5*t); g=int(14+38*t); b=int(28+80*t)
+                  if 86<x<938 and 86<y<938:
+                      r,g,b=5,18,35
+                  if near_segment(x,y,260,690,420,330,38) or near_segment(x,y,420,330,610,690,38) or near_segment(x,y,610,690,760,330,38):
+                      r,g,b=78,99,255
+                  if near_segment(x,y,260,330,420,690,38) or near_segment(x,y,420,690,610,330,38) or near_segment(x,y,610,330,760,690,38):
+                      r,g,b=39,221,255
+                  d=abs(x-720)+abs(y-266)
+                  if d<65 and (abs(x-720)<18 or abs(y-266)<18): r,g,b=200,250,255
+                  row += bytes((r,g,b,255))
+              rows.append(bytes(row))
+          raw=b''.join(rows)
+          def chunk(t,d):
+              return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
+          png=b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',N,N,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(raw,9))+chunk(b'IEND',b'')
+          p='NexusApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
+          os.makedirs(os.path.dirname(p),exist_ok=True)
+          open(p,'wb').write(png)
+          print('wrote',p,len(png),'bytes')
+          PY
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project-nexus.yml
+
+      - name: Resolve packages
+        run: xcodebuild -resolvePackageDependencies -project NEXUS.xcodeproj -scheme NEXUS
+
+      - name: Build unsigned device app
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project NEXUS.xcodeproj \
+            -scheme NEXUS \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/NexusDerived \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build | tee build/nexus-xcodebuild.log
+
+      - name: Package IPA
+        run: |
+          APP_PATH=$(find build/NexusDerived/Build/Products/Release-iphoneos -maxdepth 1 -name 'NEXUS.app' | head -1)
+          test -n "$APP_PATH"
+          rm -rf Payload NEXUS-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/NEXUS.app
+          ditto -c -k --sequesterRsrc --keepParent Payload NEXUS-unsigned.ipa
+          ls -lh NEXUS-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEXUS-unsigned-ipa
+          path: NEXUS-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEXUS-build-log
+          path: build/nexus-xcodebuild.log
+          if-no-files-found: ignore
