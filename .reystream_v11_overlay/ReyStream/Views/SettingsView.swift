@@ -3,7 +3,6 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var library: LibraryStore
     @AppStorage("autoResume") private var autoResume = true
-    @AppStorage("youtubeAPIKey") private var youtubeAPIKey = ""
     @AppStorage("downloadConnections") private var downloadConnections = 4
     @AppStorage("simultaneousDownloads") private var simultaneousDownloads = 3
     @State private var playlistName = ""
@@ -22,14 +21,9 @@ struct SettingsView: View {
                 Text("When a server supports HTTP byte ranges, ReyStream splits authorized downloads into concurrent segments. Pause/resume state is persisted. Servers without range support use a single resumable connection.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            Section("YouTube Search") {
-                SecureField("YouTube Data API key", text: $youtubeAPIKey)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                if !youtubeAPIKey.isEmpty {
-                    Button("Clear API key", role: .destructive) { youtubeAPIKey = "" }
-                }
-                Text("The key is stored in this app's local preferences and is used only for YouTube Data API search requests. YouTube URL playback does not require it.")
+            Section("YouTube") {
+                Label("Built-in search — no API key required", systemImage: "magnifyingglass")
+                Text("Search runs through YouTube's own website inside ReyStream, so there is no developer API key to configure.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             Section("Library") {
