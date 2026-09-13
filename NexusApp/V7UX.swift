@@ -100,7 +100,7 @@ enum NexusImportLedger {
         if let handle = try? FileHandle(forReadingFrom: url) {
             defer { try? handle.close() }
             while autoreleasepool(invoking: {
-                guard let data = try? handle.read(upToCount: 1_048_576), let data, !data.isEmpty else { return false }
+                guard let data = try? handle.read(upToCount: 1_048_576), !data.isEmpty else { return false }
                 hasher.update(data: data)
                 return true
             }) {}
