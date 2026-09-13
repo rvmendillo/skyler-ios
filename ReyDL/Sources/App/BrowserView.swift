@@ -11,7 +11,8 @@ struct BrowserScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Image(systemName: "lock.fill").foregroundStyle(.secondary)
+                Image(systemName: currentURL.scheme?.lowercased() == "https" ? "lock.fill" : "globe")
+                    .foregroundStyle(.secondary)
                 TextField("Address", text: $address)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
@@ -37,13 +38,19 @@ struct BrowserScreen: View {
                 ShareLink(item: currentURL) { Image(systemName: "square.and.arrow.up") }
             }
         }
-        .onChange(of: currentURL) { _, newValue in address = newValue.absoluteString }
+        .onChange(of: currentURL) { _, newValue in
+            address = newValue.absoluteString
+        }
     }
 
     private func navigate() {
         var raw = address.trimmingCharacters(in: .whitespacesAndNewlines)
         if !raw.contains("://") { raw = "https://" + raw }
-        if let url = URL(string: raw) { requestedURL = url }
+        guard var components = URLComponents(string: raw) else { return }
+        if components.scheme?.lowercased() == "http" {
+            components.scheme = "https"
+        }
+        if let url = components.url { requestedURL = url }
     }
 }
 
@@ -64,17 +71,25 @@ struct BrowserWebView: UIViewRepresentable {
         configuration.userContentController = controller
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.websiteDataStore = .default()
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         let view = WKWebView(frame: .zero, configuration: configuration)
         context.coordinator.webView = view
+        context.coordinator.lastRequestedURL = url.absoluteString
         view.navigationDelegate = context.coordinator
+        view.uiDelegate = context.coordinator
         view.allowsBackForwardNavigationGestures = true
+        view.isOpaque = true
+        view.scrollView.isScrollEnabled = true
+        view.scrollView.delaysContentTouches = false
         view.load(URLRequest(url: url))
         return view
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        guard webView.url?.absoluteString != url.absoluteString else { return }
+        let requested = url.absoluteString
+        guard context.coordinator.lastRequestedURL != requested else { return }
+        context.coordinator.lastRequestedURL = requested
         webView.load(URLRequest(url: url))
     }
 
@@ -95,14 +110,18 @@ struct BrowserWebView: UIViewRepresentable {
     })();
     """#
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         private let parent: BrowserWebView
         weak var webView: WKWebView?
+        var lastRequestedURL: String?
 
         init(_ parent: BrowserWebView) { self.parent = parent }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.name == "reydlDownload", let body = message.body as? [String: Any], let raw = body["url"] as? String, let url = URL(string: raw) else { return }
+            guard message.name == "reydlDownload",
+                  let body = message.body as? [String: Any],
+                  let raw = body["url"] as? String,
+                  let url = URL(string: raw) else { return }
             let name = body["name"] as? String
             parent.downloads.add(url: url, suggestedName: name?.isEmpty == false ? name : nil)
         }
@@ -114,12 +133,32 @@ struct BrowserWebView: UIViewRepresentable {
             }
         }
 
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            DispatchQueue.main.async {
+                if let url = webView.url { self.parent.currentURL = url }
+            }
+        }
+
+        func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+            if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
+                webView.load(URLRequest(url: url))
+            }
+            return nil
+        }
+
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             if navigationAction.shouldPerformDownload, let url = navigationAction.request.url {
                 parent.downloads.add(url: url)
                 decisionHandler(.cancel)
                 return
             }
+
+            if navigationAction.targetFrame == nil {
+                webView.load(navigationAction.request)
+                decisionHandler(.cancel)
+                return
+            }
+
             decisionHandler(.allow)
         }
 
@@ -132,11 +171,13 @@ struct BrowserWebView: UIViewRepresentable {
                 decisionHandler(.cancel)
                 return
             }
+
             if !navigationResponse.canShowMIMEType, let url = navigationResponse.response.url {
                 parent.downloads.add(url: url, suggestedName: navigationResponse.response.suggestedFilename)
                 decisionHandler(.cancel)
                 return
             }
+
             decisionHandler(.allow)
         }
     }
