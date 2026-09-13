@@ -68,7 +68,7 @@ jobs:
           print('wrote',p,len(png),'bytes')
           PY
 
-      - name: Apply Xcode 26 V9 compile fixes
+      - name: Apply Xcode 26 V9 compile fixes and model deletion UI
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -93,6 +93,23 @@ jobs:
           replace('NexusApp/V9Platform.swift', 'TextEditor(text:$body)', 'TextEditor(text:$reportBody)')
           replace('NexusApp/V9Platform.swift', 'body:body,citations:assistant.lastCitations', 'body:reportBody,citations:assistant.lastCitations', count=4)
           replace('NexusApp/V9Root.swift', '.font(.largeTitle.black())', '.font(.largeTitle.weight(.black))')
+          replace('NexusApp/V9Documents.swift', 'NexusV8CSVViewer(url: item.url)', 'NexusV8CSVViewer(url: item.url, delimiter: ",")')
+
+          replace(
+              'NexusApp/V7LocalLLM.swift',
+              'Label("Remove weights", systemImage: "externaldrive.badge.minus")',
+              'Label("Delete download", systemImage: "trash")'
+          )
+          replace(
+              'NexusApp/V8Multimodal.swift',
+              'label: { Text("Remove weights") }',
+              'label: { Label("Delete download", systemImage: "trash") }'
+          )
+          replace(
+              'NexusApp/V9Platform.swift',
+              'if models.activeModelID != model.id { Button("Remove") { models.removeDownloadedWeights(model); snap=NexusV9StorageEngine.snapshot() } }',
+              'Button(role:.destructive) { models.removeDownloadedWeights(model); snap=NexusV9StorageEngine.snapshot() } label: { Label("Delete download", systemImage:"trash") }'
+          )
           PY
 
       - name: Generate Xcode project
