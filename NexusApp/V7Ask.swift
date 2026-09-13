@@ -7,16 +7,78 @@ struct NexusV7PreparedAnalysis: @unchecked Sendable {
     let standardized: NexusStandardizationReport
 }
 
-enum NexusV7AnswerEngine {
-    static func prepare(question: String, records: [KnowledgeRecord]) async -> NexusV7PreparedAnalysis {
-        await Task.detached(priority: .userInitiated) {
+private struct NexusV7AnalysisSnapshot: @unchecked Sendable {
+    let comprehensive: NexusV4Report
+    let personality: NexusPersonalityReport
+    let life: NexusLifeAnalysisReport
+    let standardized: NexusStandardizationReport
+}
+
+private struct NexusV7AnalysisCacheKey: Hashable, Sendable {
+    let count: Int
+    let firstID: String
+    let middleID: String
+    let lastID: String
+    let firstTime: TimeInterval?
+    let lastTime: TimeInterval?
+
+    init(records: [KnowledgeRecord]) {
+        count = records.count
+        firstID = records.first?.id ?? ""
+        middleID = records.isEmpty ? "" : records[records.count / 2].id
+        lastID = records.last?.id ?? ""
+        firstTime = records.first?.timestamp?.timeIntervalSince1970
+        lastTime = records.last?.timestamp?.timeIntervalSince1970
+    }
+}
+
+private actor NexusV7AnalysisCache {
+    static let shared = NexusV7AnalysisCache()
+
+    private var cachedKey: NexusV7AnalysisCacheKey?
+    private var cachedSnapshot: NexusV7AnalysisSnapshot?
+
+    func snapshot(for records: [KnowledgeRecord]) async -> NexusV7AnalysisSnapshot {
+        let key = NexusV7AnalysisCacheKey(records: records)
+        if key == cachedKey, let cachedSnapshot { return cachedSnapshot }
+
+        let snapshot = await Task.detached(priority: .userInitiated) {
+            // Keep the expensive, question-independent analysis off the main actor and
+            // compute it only once per vault revision. The report objects are compact;
+            // the large source array is not retained by this cache.
             let comprehensive = ComprehensiveAnalysisEngine.analyze(records)
             let personality = DataPersonalityEngine.analyze(records)
-            let package = NexusReasoner.package(question: question, records: records, overallSummary: comprehensive.overall, personality: personality)
             let life = NexusLifeAnalysisEngine.analyze(records)
             let standardized = NexusStandardizationEngine.report(records)
-            return NexusV7PreparedAnalysis(package: package, life: life, standardized: standardized)
+            return NexusV7AnalysisSnapshot(comprehensive: comprehensive,
+                                           personality: personality,
+                                           life: life,
+                                           standardized: standardized)
         }.value
+
+        cachedKey = key
+        cachedSnapshot = snapshot
+        return snapshot
+    }
+
+    func invalidate() {
+        cachedKey = nil
+        cachedSnapshot = nil
+    }
+}
+
+enum NexusV7AnswerEngine {
+    static func prepare(question: String, records: [KnowledgeRecord]) async -> NexusV7PreparedAnalysis {
+        let snapshot = await NexusV7AnalysisCache.shared.snapshot(for: records)
+        let package = await Task.detached(priority: .userInitiated) {
+            NexusReasoner.package(question: question,
+                                  records: records,
+                                  overallSummary: snapshot.comprehensive.overall,
+                                  personality: snapshot.personality)
+        }.value
+        return NexusV7PreparedAnalysis(package: package,
+                                       life: snapshot.life,
+                                       standardized: snapshot.standardized)
     }
 
     static func answer(question: String, records: [KnowledgeRecord]) async -> NexusEnsembleResult {
@@ -32,9 +94,10 @@ enum NexusV7AnswerEngine {
         guard !portableModels.isEmpty else { return base }
 
         var portableOpinions: [NexusModelOpinion] = []
+        portableOpinions.reserveCapacity(portableModels.count)
+        let sharedPortableContext = prepared.package.context + "\nLIFE: " + prepared.life.overall + "\nBASE ENSEMBLE: " + base.answer
         for model in portableModels {
-            let context = prepared.package.context + "\nLIFE: " + prepared.life.overall + "\nBASE ENSEMBLE: " + base.answer
-            if let opinion = await store.opinionFromModel(model, question: question, context: context) {
+            if let opinion = await store.opinionFromModel(model, question: question, context: sharedPortableContext) {
                 portableOpinions.append(opinion)
             }
         }
@@ -51,7 +114,7 @@ enum NexusV7AnswerEngine {
         \(portableText)
 
         EVIDENCE CONTEXT:
-        \(String(prepared.package.context.prefix(7500)))
+        \(String(prepared.package.context.prefix(6000)))
         """
 
         let finalAnswer: String
