@@ -49,7 +49,7 @@ jobs:
           python3 - <<'PY'
           import hashlib, pathlib
           source = pathlib.Path('Sources/ReyScrapeApp.swift').read_bytes()
-          expected = '95e9707a21bfa506865f180c9ad3ac5e05c1d603d9dcafa62f1786f74b0571cb'
+          expected = 'd1bfd9e7704cda41f84bc684fdc60d0327a89925dc1f037f2d8c1550e7fa6137'
           actual = hashlib.sha256(source).hexdigest()
           assert actual == expected, f'3.2 source checksum mismatch: {actual}'
           print(f'ReyScrape 3.2 source {len(source)} bytes, sha256={actual}')
