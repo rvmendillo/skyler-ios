@@ -52,8 +52,8 @@ struct ChatMessage: Identifiable, Hashable {
     enum Role: String { case user, assistant }
     let id = UUID()
     let role: Role
-    let text: String
-    let evidence: [String]
+    var text: String
+    var evidence: [String]
     let timestamp = Date()
 }
 
