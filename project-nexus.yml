@@ -36,6 +36,7 @@ targets:
       - NexusApp/V5JourneyModels.swift
       - NexusApp/V6Standardization.swift
       - NexusApp/V6LifeAnalysis.swift
+      - NexusApp/V6CompileFixes.swift
       - NexusApp/V6AIEnsemble.swift
       - NexusApp/V6Connectors.swift
       - NexusApp/V6Experience.swift
