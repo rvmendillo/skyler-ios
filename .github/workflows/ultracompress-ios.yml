@@ -14,6 +14,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Generate branded app icon
+        run: python3 UltraCompress/Scripts/make_app_icon.py
+
       - name: Install Tuist
         run: |
           brew update
