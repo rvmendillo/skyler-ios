@@ -14,7 +14,7 @@ struct RootV8View: View {
                     .tabItem { Label("Explore", systemImage: "book.pages.fill") }
                 NavigationStack { KnowledgeGraphV3View() }
                     .tabItem { Label("Graph", systemImage: "network") }
-                NavigationStack { AskV8View() }
+                NavigationStack { AskV8FastView() }
                     .tabItem { Label("Chat", systemImage: "bubble.left.and.text.bubble.right.fill") }
             }
             .tint(.cyan)
@@ -62,7 +62,7 @@ struct NexusSplashV8: View {
                     Image(systemName: "brain.head.profile.fill")
                         .font(.system(size: 48, weight: .bold))
                         .foregroundStyle(.cyan)
-                    Image(systemName: "eye.fill")
+                    Image(systemName: "bolt.fill")
                         .font(.caption.bold())
                         .foregroundStyle(.white)
                         .offset(x: 31, y: 31)
@@ -72,7 +72,7 @@ struct NexusSplashV8: View {
                 Text("NEXUS")
                     .font(.system(size: 40, weight: .black, design: .rounded))
                     .tracking(8)
-                Text("V8 • SHARED MULTIMODAL INTELLIGENCE")
+                Text("V8.2 • LATENCY-FIRST SHARED AI")
                     .font(.caption.bold())
                     .tracking(1.2)
                     .foregroundStyle(.cyan)
@@ -104,31 +104,31 @@ struct HomeV8View: View {
                         Text("NEXUS")
                             .font(.system(size: 42, weight: .black, design: .rounded))
                             .tracking(7)
-                        Text("V8")
+                        Text("V8.2")
                             .font(.headline.weight(.black))
                             .foregroundStyle(.cyan)
                     }
                     Text("YOUR PERSONAL MULTIMODAL UNIVERSE")
                         .font(.caption.bold())
                         .foregroundStyle(.cyan)
-                    Text("Chat, personal data, files, images, PDFs and tables now use the same shared AI layer instead of isolated model silos.")
+                    Text("Chat and files now default to compact retrieval and one shared resident model pass, with deeper multi-engine analysis only when you ask for it.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
 
                 HStack(spacing: 9) {
                     metric("Vault", "\(model.records.count)", "externaldrive.fill")
-                    metric("Build", "V8.1", "hammer.fill")
+                    metric("Build", "V8.2", "hammer.fill")
                     metric("AI", language.activeModelID.isEmpty && multimodal.activePresetID.isEmpty ? "Ready" : "Loaded", "brain.head.profile.fill")
                 }
 
-                NavigationLink { FilesV8View() } label: {
-                    feature("Files", "Import and open images, text, PDFs and CSVs, then analyze several formats together with shared AI.", "folder.fill.badge.gearshape", .cyan)
+                NavigationLink { FilesV8FastView() } label: {
+                    feature("Files", "Open images, text, PDFs and CSVs; cached extraction and compact retrieval keep file questions responsive.", "folder.fill.badge.gearshape", .cyan)
                 }
                 .buttonStyle(.plain)
 
-                NavigationLink { AskV8View() } label: {
-                    feature("NEXUS Chat", "Friendly conversational answers across your vault, with file attachments directly in chat.", "bubble.left.and.text.bubble.right.fill", .mint)
+                NavigationLink { AskV8FastView() } label: {
+                    feature("NEXUS Chat", "Fast conversational answers with file attachments, compact retrieval and optional Deep mode.", "bolt.bubble.fill", .mint)
                 }
                 .buttonStyle(.plain)
 
@@ -148,7 +148,7 @@ struct HomeV8View: View {
                 .buttonStyle(.plain)
 
                 NavigationLink { PortableModelsV8View() } label: {
-                    feature("Shared AI Models", "Download once and reuse the same optional GGUF language models across Chat and file analysis.", "cpu.fill", .yellow)
+                    feature("Shared AI Models", "Download once and keep one primary model resident for fast reuse across Chat and Files.", "cpu.fill", .yellow)
                 }
                 .buttonStyle(.plain)
 
@@ -205,18 +205,18 @@ struct HomeV8View: View {
 struct ExploreHubV8View: View {
     var body: some View {
         List {
-            Section("V8 shared AI") {
-                NavigationLink { FilesV8View() } label: {
-                    row("Files + Multimodal AI", "Open images, PDFs, text and CSV; combine formats into one analysis", "folder.fill.badge.gearshape", .cyan)
+            Section("V8.2 shared AI") {
+                NavigationLink { FilesV8FastView() } label: {
+                    row("Files + Multimodal AI", "View images, PDFs, text and CSV; analyze them with cached extraction and fast shared AI", "folder.fill.badge.gearshape", .cyan)
                 }
-                NavigationLink { AskV8View() } label: {
-                    row("NEXUS Chat", "Friendly answers with file attachments and shared models", "bubble.left.and.text.bubble.right.fill", .mint)
+                NavigationLink { AskV8FastView() } label: {
+                    row("NEXUS Chat", "Fast answers with compact retrieval, file attachments and optional Deep mode", "bolt.bubble.fill", .mint)
                 }
                 NavigationLink { PortableModelsV8View() } label: {
-                    row("Shared AI Models", "Verified GGUF downloads reused across the app", "cpu.fill", .yellow)
+                    row("Shared AI Models", "One resident primary model reused across Chat and Files", "cpu.fill", .yellow)
                 }
                 NavigationLink { MultimodalLabV8View() } label: {
-                    row("Vision Model Manager", "Download and load local vision-language models", "eye.fill", .cyan)
+                    row("Vision Model Manager", "Local vision for images and visual PDF/page analysis", "eye.fill", .cyan)
                 }
             }
 
@@ -235,7 +235,7 @@ struct ExploreHubV8View: View {
                 NavigationLink { DiscoverV4View() } label: { row("Deep Analysis", "Comprehensive evidence and uncertainty", "scope", .indigo) }
             }
         }
-        .navigationTitle("Explore V8")
+        .navigationTitle("Explore V8.2")
     }
 
     private func row(_ title: String, _ subtitle: String, _ symbol: String, _ color: Color) -> some View {
