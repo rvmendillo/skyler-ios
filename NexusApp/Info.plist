@@ -9,7 +9,8 @@
 <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
 <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
 <key>LSRequiresIPhoneOS</key><true/>
-<key>UILaunchScreen</key><dict/>
+<key>UIUserInterfaceStyle</key><string>Dark</string>
+<key>UILaunchScreen</key><dict><key>UIColorName</key><string>LaunchBackground</string></dict>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
 <key>NSContactsUsageDescription</key><string>NEXUS uses contacts you authorize to build your private relationship graph on-device.</string>
 <key>NSCalendarsFullAccessUsageDescription</key><string>NEXUS analyzes authorized calendar events locally to understand routines and time allocation.</string>
