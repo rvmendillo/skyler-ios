@@ -217,6 +217,10 @@ private struct DownloadRow: View {
     @EnvironmentObject private var downloads: DownloadManager
     let item: DownloadItem
 
+    private var threadProgress: [Double] {
+        downloads.segmentProgress(for: item)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .top) {
@@ -239,6 +243,10 @@ private struct DownloadRow: View {
 
             ProgressView(value: item.progress)
                 .tint(item.mode == .segmented ? .indigo : .accentColor)
+
+            if !threadProgress.isEmpty && item.state != .completed {
+                ThreadProgressGrid(progress: threadProgress)
+            }
 
             HStack(spacing: 16) {
                 Text(sizeText).font(.caption2).foregroundStyle(.secondary)
@@ -278,10 +286,10 @@ private struct DownloadRow: View {
         switch item.state {
         case .queued: return "Queued"
         case .probing: return "Probing server…"
-        case .downloading: return item.mode == .segmented ? "Turbo • \(max(item.segmentCount, 1)) connections" : "Direct transfer • live engine"
+        case .downloading: return item.mode == .segmented ? "Turbo • \(max(item.segmentCount, 1)) live threads" : "Direct transfer • live engine"
         case .paused: return "Paused • resume available"
         case .assembling: return "Joining downloaded segments…"
-        case .completed: return "Complete"
+        case .completed: return "Complete • saved in Files/REYDL Downloads"
         case .failed: return "Needs attention"
         }
     }
@@ -293,6 +301,53 @@ private struct DownloadRow: View {
             return "\(item.receivedBytes.reydlByteString) / \(item.totalBytes.reydlByteString)"
         }
         return item.receivedBytes.reydlByteString
+    }
+}
+
+private struct ThreadProgressGrid: View {
+    let progress: [Double]
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 4)
+
+    private var completed: Int {
+        progress.filter { $0 >= 0.999 }.count
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("THREAD ACTIVITY", systemImage: "square.grid.3x3.fill")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(completed)/\(progress.count)")
+                    .font(.caption2.monospacedDigit().weight(.bold))
+                    .foregroundStyle(.secondary)
+            }
+
+            LazyVGrid(columns: columns, spacing: 6) {
+                ForEach(Array(progress.enumerated()), id: \.offset) { index, value in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 2) {
+                            Text("T\(index + 1)")
+                            Spacer(minLength: 2)
+                            Text("\(Int(value * 100))%")
+                        }
+                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+
+                        ProgressView(value: value)
+                            .tint(value >= 0.999 ? .green : .indigo)
+                            .scaleEffect(x: 1, y: 0.72, anchor: .center)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 5)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+            }
+        }
+        .padding(8)
+        .background(.indigo.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -310,17 +365,19 @@ struct SettingsView: View {
                 Stepper("Maximum parallel ranges: \(downloads.segmentLimit)", value: $downloads.segmentLimit, in: 2...64, step: 2)
                 LabeledContent("Queue limit", value: "No app-imposed limit")
                 LabeledContent("Primary engine", value: "Live URLSession")
+                LabeledContent("Thread monitor", value: "Per-range live progress")
+                LabeledContent("Saved files", value: "Documents/REYDL Downloads")
                 LabeledContent("Resume", value: "Range + persisted queue")
             } header: {
                 Text("Turbo Engine")
             } footer: {
-                Text("REYDL uses an immediate live transfer engine and parallel HTTP byte ranges when the server supports them. iOS and the server can still limit actual concurrency. Fully suspended apps cannot be guaranteed to keep a live-session transfer running indefinitely.")
+                Text("REYDL uses an immediate live transfer engine and parallel HTTP byte ranges when the server supports them. Each active range is shown separately in the download row. iOS and the server can still limit actual concurrency.")
             }
             Section("Safari Capture") {
                 Text("Enable REYDL in Settings → Apps → Safari → Extensions and set website access to Allow. Safari interception is best-effort; the in-app browser is the most reliable capture route on iOS.")
             }
             Section("Files") {
-                Text("Completed files are stored in Documents/REYDL Downloads and exposed through Files app file sharing.")
+                Text("Completed files are claimed from URLSession before its temporary file expires, verified, then stored in Documents/REYDL Downloads and exposed through Files app file sharing.")
             }
         }
         .navigationTitle("REYDL Turbo")
