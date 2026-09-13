@@ -70,18 +70,24 @@ jobs:
           print(path, len(png))
           PY
 
-      - name: Probe large-file endpoints
+      - name: Verify 206 range support on reported endpoints
         run: |
           set -euo pipefail
-          curl -fL --range 0-1023 --max-time 30 -A 'REYDL/1.1.2' \
-            -o /tmp/reydl-hetzner-probe.bin \
-            https://fsn1-speed.hetzner.com/10GB.bin
-          test "$(wc -c < /tmp/reydl-hetzner-probe.bin | tr -d ' ')" -ge 1024
 
-          curl -fL --range 0-1023 --max-time 30 -A 'REYDL/1.1.2' \
-            -o /tmp/reydl-thinkbroadband-probe.bin \
-            http://ipv4.download.thinkbroadband.com/5GB.zip
-          test "$(wc -c < /tmp/reydl-thinkbroadband-probe.bin | tr -d ' ')" -ge 1024
+          check_range() {
+            name="$1"
+            url="$2"
+            headers="/tmp/${name}-headers.txt"
+            body="/tmp/${name}-body.bin"
+            curl -fsSL --range 0-0 --max-time 30 --max-filesize 1024 \
+              -A 'REYDL/1.1.3' -D "$headers" -o "$body" "$url"
+            grep -Eq '^HTTP/[^ ]+ 206' "$headers"
+            grep -Eiq '^Content-Range:[[:space:]]*bytes[[:space:]]+0-0/' "$headers"
+            test "$(wc -c < "$body" | tr -d ' ')" -eq 1
+          }
+
+          check_range hetzner 'https://fsn1-speed.hetzner.com/10GB.bin'
+          check_range thinkbroadband 'http://ipv4.download.thinkbroadband.com/5GB.zip'
 
       - name: Generate Xcode project
         working-directory: ReyDL
@@ -103,7 +109,7 @@ jobs:
             CODE_SIGN_IDENTITY='' \
             build
 
-      - name: Verify persistence thread monitor extension and package IPA
+      - name: Verify multithread probe persistence extension and package IPA
         working-directory: ReyDL
         run: |
           set -euo pipefail
@@ -112,10 +118,12 @@ jobs:
           test -d "$APP_PATH/PlugIns/ReyDLExtension.appex"
           test -f "$APP_PATH/PlugIns/ReyDLExtension.appex/manifest.json"
           test -f "$APP_PATH/AppIcon60x60@2x.png" || find "$APP_PATH" -iname '*AppIcon*' -print | grep -q .
+          grep -q 'bytes=0-0' Sources/App/DownloadManager.swift
+          grep -q 'status == 206' Sources/App/DownloadManager.swift
           grep -q 'liveSession.downloadTask' Sources/App/DownloadManager.swift
           grep -q 'claimDownloadedFile' Sources/App/DownloadManager.swift
-          grep -q 'segmentProgress(for' Sources/App/DownloadManager.swift
-          grep -q 'ThreadProgressGrid' Sources/App/RootView.swift
+          grep -q 'MULTI-CONNECTION PROGRESS' Sources/App/RootView.swift
+          grep -q '1 STREAM' Sources/App/RootView.swift
           grep -q 'bin' Sources/App/BrowserView.swift
           grep -q 'bin' Sources/Extension/Resources/content.js
           rm -rf Payload REYDL-unsigned.ipa
