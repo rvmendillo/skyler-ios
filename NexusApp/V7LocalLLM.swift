@@ -489,6 +489,28 @@ final class NexusPortableModelStore: ObservableObject {
         }
     }
 
+    func streamRespond(_ prompt: String,
+                       systemContext: String = "",
+                       onPartial: @escaping (String) -> Void) async -> String? {
+        guard let chat else { return nil }
+        do {
+            try await chat.resetHistory()
+            if !systemContext.isEmpty {
+                try await chat.setSystemPrompt("You are a private NEXUS on-device reasoning model. Use only supplied evidence for personal claims. \(String(systemContext.prefix(5000)))")
+            }
+            let stream = chat.ask(String(prompt.prefix(9000)))
+            var full = ""
+            for try await token in stream {
+                full += token
+                onPartial(full)
+            }
+            return full.trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
+    }
+
     func opinionFromModel(_ model: NexusPortableModel, question: String, context: String) async -> NexusModelOpinion? {
         guard model.enabledForEnsemble else { return nil }
         guard canSafelyAttemptLoad(model) else {
