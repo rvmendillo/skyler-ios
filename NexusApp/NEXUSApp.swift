@@ -5,7 +5,7 @@ struct NEXUSApp: App {
     @StateObject private var model = NexusModel()
     var body: some Scene {
         WindowGroup {
-            RootView().environmentObject(model)
+            RootV3View().environmentObject(model)
         }
     }
 }
