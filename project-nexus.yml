@@ -15,8 +15,8 @@ settings:
     GENERATE_INFOPLIST_FILE: NO
     ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     PRODUCT_NAME: NEXUS
-    MARKETING_VERSION: 1.3.0
-    CURRENT_PROJECT_VERSION: 5
+    MARKETING_VERSION: 1.4.0
+    CURRENT_PROJECT_VERSION: 6
     SUPPORTS_MACCATALYST: NO
     ENABLE_BITCODE: NO
     CODE_SIGN_STYLE: Manual
@@ -34,7 +34,11 @@ targets:
       - NexusApp/V4Analysis.swift
       - NexusApp/V4Shell.swift
       - NexusApp/V5JourneyModels.swift
-      - NexusApp/V5JourneyViews.swift
+      - NexusApp/V6Standardization.swift
+      - NexusApp/V6LifeAnalysis.swift
+      - NexusApp/V6AIEnsemble.swift
+      - NexusApp/V6Connectors.swift
+      - NexusApp/V6Experience.swift
       - NexusApp/NEXUSApp.swift
       - NexusApp/Views.swift
       - NexusApp/Assets.xcassets
