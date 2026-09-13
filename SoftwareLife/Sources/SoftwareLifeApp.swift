@@ -6,7 +6,7 @@ struct SoftwareLifeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            GameRoot3DView()
+            GameRootSceneKitView()
                 .environmentObject(game)
                 .task(id: game.currentPlayerIndex) {
                     await game.autoplayCurrentTurn()
