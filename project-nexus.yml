@@ -48,6 +48,8 @@ targets:
       - NexusApp/V7Storybook.swift
       - NexusApp/V7Personality.swift
       - NexusApp/V7UX.swift
+      - NexusApp/V7Ask.swift
+      - NexusApp/V7Root.swift
       - NexusApp/NEXUSApp.swift
       - NexusApp/Views.swift
       - NexusApp/Assets.xcassets
