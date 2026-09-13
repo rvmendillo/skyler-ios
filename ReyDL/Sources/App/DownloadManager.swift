@@ -7,16 +7,20 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
     @Published private(set) var items: [DownloadItem] = []
     @Published var segmentLimit: Int {
         didSet {
-            let value = max(2, min(64, segmentLimit))
-            if value != segmentLimit { segmentLimit = value; return }
-            UserDefaults.standard.set(value, forKey: Self.segmentLimitKey)
+            let clamped = max(2, min(64, segmentLimit))
+            if clamped != segmentLimit {
+                segmentLimit = clamped
+                return
+            }
+            UserDefaults.standard.set(clamped, forKey: Self.segmentLimitKey)
         }
     }
 
     private static let segmentLimitKey = "reydl.segmentLimit"
-    private static let sessionIdentifier = "com.rvmendillo.reydl.background.v1"
+    private static let sessionIdentifier = "com.rvmendillo.reydl.background.v2"
+
     private let ioQueue = DispatchQueue(label: "com.rvmendillo.reydl.io", qos: .utility)
-    private let stateLock = NSLock()
+    private let taskLock = NSLock()
     private var ignoredTaskIDs = Set<Int>()
 
     private lazy var backgroundSession: URLSession = {
@@ -33,18 +37,24 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
     }()
 
     private override init() {
-        let saved = UserDefaults.standard.integer(forKey: Self.segmentLimitKey)
-        self.segmentLimit = saved == 0 ? 16 : saved
+        let savedLimit = UserDefaults.standard.integer(forKey: Self.segmentLimitKey)
+        segmentLimit = savedLimit == 0 ? 16 : savedLimit
         super.init()
         loadState()
         _ = backgroundSession
         restoreTaskStates()
     }
 
+    // MARK: - Public API
+
     func add(url: URL, suggestedName: String? = nil) {
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return }
 
-        let name = Self.sanitizedFileName(suggestedName ?? url.lastPathComponent.nonEmpty ?? "download-\(Date().timeIntervalSince1970).bin")
+        let fallback = url.lastPathComponent.isEmpty
+            ? "download-\(Int(Date().timeIntervalSince1970)).bin"
+            : url.lastPathComponent
+        let name = Self.sanitizedFileName(suggestedName?.isEmpty == false ? suggestedName! : fallback)
+
         let item = DownloadItem(
             id: UUID(),
             urlString: url.absoluteString,
@@ -69,14 +79,13 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
     }
 
     func add(urlString: String) {
-        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed) else { return }
+        let raw = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: raw) else { return }
         add(url: url)
     }
 
     func handleDeepLink(_ deepLink: URL) {
-        guard deepLink.scheme?.lowercased() == "reydl" else { return }
-        guard deepLink.host == "add" else { return }
+        guard deepLink.scheme?.lowercased() == "reydl", deepLink.host == "add" else { return }
         guard let components = URLComponents(url: deepLink, resolvingAgainstBaseURL: false),
               let raw = components.queryItems?.first(where: { $0.name == "url" })?.value,
               let url = URL(string: raw) else { return }
@@ -86,9 +95,7 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
 
     func pause(_ id: UUID) {
         backgroundSession.getAllTasks { tasks in
-            for task in tasks where Self.jobID(from: task.taskDescription) == id {
-                task.suspend()
-            }
+            tasks.filter { Self.jobID(from: $0.taskDescription) == id }.forEach { $0.suspend() }
             DispatchQueue.main.async {
                 self.update(id) { $0.state = .paused }
             }
@@ -117,16 +124,11 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
     }
 
     func remove(_ id: UUID) {
-        backgroundSession.getAllTasks { tasks in
-            for task in tasks where Self.jobID(from: task.taskDescription) == id {
-                self.stateLock.lock(); self.ignoredTaskIDs.insert(task.taskIdentifier); self.stateLock.unlock()
-                task.cancel()
-            }
-        }
+        cancelTasks(for: id)
         ioQueue.async {
             try? FileManager.default.removeItem(at: self.partsDirectory(id))
-            if let item = self.itemSnapshot(id), let output = self.completedURL(for: item) {
-                try? FileManager.default.removeItem(at: output)
+            if let item = self.itemSnapshot(id), item.state == .completed {
+                try? FileManager.default.removeItem(at: self.downloadsDirectory().appendingPathComponent(item.fileName))
             }
         }
         DispatchQueue.main.async {
@@ -137,30 +139,26 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
 
     func completedURL(for item: DownloadItem) -> URL? {
         guard item.state == .completed else { return nil }
-        return downloadsDirectory().appendingPathComponent(item.fileName)
+        let url = downloadsDirectory().appendingPathComponent(item.fileName)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
+
+    // MARK: - Probing and scheduling
 
     private func restart(_ id: UUID) {
         guard let item = itemSnapshot(id), let url = URL(string: item.urlString) else { return }
-        backgroundSession.getAllTasks { tasks in
-            for task in tasks where Self.jobID(from: task.taskDescription) == id {
-                self.stateLock.lock(); self.ignoredTaskIDs.insert(task.taskIdentifier); self.stateLock.unlock()
-                task.cancel()
-            }
-            self.ioQueue.async { try? FileManager.default.removeItem(at: self.partsDirectory(id)) }
-            DispatchQueue.main.async {
-                self.update(id) {
-                    $0.state = .probing
-                    $0.mode = .unknown
-                    $0.totalBytes = 0
-                    $0.receivedBytes = 0
-                    $0.segmentCount = 0
-                    $0.completedSegments = 0
-                    $0.errorMessage = nil
-                }
-                self.probe(id, overrideURL: url)
-            }
+        cancelTasks(for: id)
+        ioQueue.async { try? FileManager.default.removeItem(at: self.partsDirectory(id)) }
+        update(id) {
+            $0.state = .probing
+            $0.mode = .unknown
+            $0.totalBytes = 0
+            $0.receivedBytes = 0
+            $0.segmentCount = 0
+            $0.completedSegments = 0
+            $0.errorMessage = nil
         }
+        probe(id, overrideURL: url)
     }
 
     private func probe(_ id: UUID, overrideURL: URL? = nil) {
@@ -177,19 +175,20 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
             }
 
             let total = http.expectedContentLength
-            let acceptRanges = (http.value(forHTTPHeaderField: "Accept-Ranges") ?? "").lowercased().contains("bytes")
-            let name = response?.suggestedFilename.map(Self.sanitizedFileName)
+            let acceptsRanges = (http.value(forHTTPHeaderField: "Accept-Ranges") ?? "")
+                .lowercased().contains("bytes")
+            let suggestedName = response?.suggestedFilename.map { Self.sanitizedFileName($0) }
             let etag = http.value(forHTTPHeaderField: "ETag")
             let modified = http.value(forHTTPHeaderField: "Last-Modified")
 
             DispatchQueue.main.async {
                 self.update(id) {
-                    if let name, !name.isEmpty { $0.fileName = name }
+                    if let suggestedName, !suggestedName.isEmpty { $0.fileName = suggestedName }
                     if total > 0 { $0.totalBytes = total }
                     $0.etag = etag
                     $0.lastModified = modified
                 }
-                if acceptRanges && total >= 2 * 1024 * 1024 {
+                if acceptsRanges && total >= 2 * 1024 * 1024 {
                     self.startSegmented(id: id, url: url, total: total)
                 } else {
                     self.startSingle(id: id, url: url)
@@ -200,36 +199,40 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
 
     private func startSegmented(id: UUID, url: URL, total: Int64) {
         guard var item = itemSnapshot(id) else { return }
-        let limit = max(2, min(64, segmentLimit))
+
+        let maxRanges = max(2, min(64, segmentLimit))
         let targetChunk: Int64 = 8 * 1024 * 1024
-        let suggested = max(2, Int((total + targetChunk - 1) / targetChunk))
-        let count = min(limit, suggested)
-        let chunk = (total + Int64(count) - 1) / Int64(count)
+        let desiredRanges = max(2, Int((total + targetChunk - 1) / targetChunk))
+        let count = min(maxRanges, desiredRanges)
+        let chunkSize = (total + Int64(count) - 1) / Int64(count)
 
         item.state = .downloading
         item.mode = .segmented
         item.totalBytes = total
+        item.receivedBytes = 0
         item.segmentCount = count
         item.completedSegments = 0
-        item.receivedBytes = 0
+        item.errorMessage = nil
         set(item)
 
         ioQueue.sync {
-            let dir = partsDirectory(id)
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let directory = partsDirectory(id)
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
 
         for index in 0..<count {
-            let start = Int64(index) * chunk
-            let end = min(total - 1, start + chunk - 1)
+            let start = Int64(index) * chunkSize
+            let end = min(total - 1, start + chunkSize - 1)
             guard start <= end else { continue }
+
             var request = URLRequest(url: url)
             request.setValue("bytes=\(start)-\(end)", forHTTPHeaderField: "Range")
             if let validator = item.etag ?? item.lastModified {
                 request.setValue(validator, forHTTPHeaderField: "If-Range")
             }
+
             let task = backgroundSession.downloadTask(with: request)
-            task.taskDescription = "\(id.uuidString)|segment|\(index)|\(start)|\(end)"
+            task.taskDescription = "\(id.uuidString)|segment|\(index)"
             task.resume()
         }
     }
@@ -238,14 +241,28 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         update(id) {
             $0.state = .downloading
             $0.mode = .single
+            $0.receivedBytes = 0
             $0.segmentCount = 1
             $0.completedSegments = 0
             $0.errorMessage = nil
         }
         let task = backgroundSession.downloadTask(with: url)
-        task.taskDescription = "\(id.uuidString)|single|0|0|0"
+        task.taskDescription = "\(id.uuidString)|single|0"
         task.resume()
     }
+
+    private func cancelTasks(for id: UUID) {
+        backgroundSession.getAllTasks { tasks in
+            for task in tasks where Self.jobID(from: task.taskDescription) == id {
+                self.taskLock.lock()
+                self.ignoredTaskIDs.insert(task.taskIdentifier)
+                self.taskLock.unlock()
+                task.cancel()
+            }
+        }
+    }
+
+    // MARK: - URLSession delegates
 
     func urlSession(
         _ session: URLSession,
@@ -257,98 +274,113 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         guard let id = Self.jobID(from: downloadTask.taskDescription) else { return }
         DispatchQueue.main.async {
             self.update(id, persist: false) { item in
-                item.receivedBytes = min(max(item.receivedBytes + bytesWritten, totalBytesWritten), max(item.totalBytes, totalBytesExpectedToWrite))
-                if item.totalBytes <= 0 && totalBytesExpectedToWrite > 0 { item.totalBytes = totalBytesExpectedToWrite }
+                if item.mode == .single {
+                    item.receivedBytes = totalBytesWritten
+                    if item.totalBytes <= 0, totalBytesExpectedToWrite > 0 {
+                        item.totalBytes = totalBytesExpectedToWrite
+                    }
+                } else {
+                    item.receivedBytes = min(item.totalBytes, max(0, item.receivedBytes + bytesWritten))
+                }
                 if item.state != .paused { item.state = .downloading }
             }
         }
     }
 
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        guard let parsed = Self.parseDescription(downloadTask.taskDescription) else { return }
-        guard let item = itemSnapshot(parsed.id) else { return }
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        guard let descriptor = Self.parseDescription(downloadTask.taskDescription),
+              let item = itemSnapshot(descriptor.id) else { return }
 
-        if parsed.kind == "segment" {
+        if descriptor.kind == "segment" {
             guard item.mode == .segmented else { return }
             let status = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0
             guard status == 206 else {
-                DispatchQueue.main.async { self.fallbackToSingleAfterRangeFailure(parsed.id) }
+                DispatchQueue.main.async { self.fallbackToSingle(descriptor.id) }
                 return
             }
 
             ioQueue.async {
-                let dir = self.partsDirectory(parsed.id)
-                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                let destination = dir.appendingPathComponent(String(format: "part-%03d", parsed.index))
+                let directory = self.partsDirectory(descriptor.id)
+                try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let destination = directory.appendingPathComponent(String(format: "part-%03d", descriptor.index))
                 try? FileManager.default.removeItem(at: destination)
                 do {
                     try FileManager.default.moveItem(at: location, to: destination)
+                    DispatchQueue.main.async { self.segmentFinished(descriptor.id) }
                 } catch {
-                    DispatchQueue.main.async { self.fail(parsed.id, error.localizedDescription) }
-                    return
+                    DispatchQueue.main.async { self.fail(descriptor.id, error.localizedDescription) }
                 }
-                DispatchQueue.main.async { self.segmentFinished(parsed.id) }
             }
-        } else {
-            ioQueue.async {
-                do {
-                    let finalURL = self.uniqueFinalURL(for: item)
-                    try? FileManager.default.createDirectory(at: finalURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try FileManager.default.moveItem(at: location, to: finalURL)
-                    DispatchQueue.main.async {
-                        self.update(parsed.id) {
-                            $0.fileName = finalURL.lastPathComponent
-                            $0.state = .completed
-                            $0.completedSegments = 1
-                            if $0.totalBytes <= 0 {
-                                $0.totalBytes = (try? finalURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? $0.receivedBytes
-                            }
-                            $0.receivedBytes = $0.totalBytes
-                        }
+            return
+        }
+
+        ioQueue.async {
+            let finalURL = self.uniqueFinalURL(for: item)
+            do {
+                try? FileManager.default.createDirectory(at: finalURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try FileManager.default.moveItem(at: location, to: finalURL)
+                let size = Self.fileSize(finalURL)
+                DispatchQueue.main.async {
+                    self.update(descriptor.id) {
+                        $0.fileName = finalURL.lastPathComponent
+                        $0.state = .completed
+                        $0.completedSegments = 1
+                        if $0.totalBytes <= 0 { $0.totalBytes = size }
+                        $0.receivedBytes = $0.totalBytes > 0 ? $0.totalBytes : size
                     }
-                } catch {
-                    DispatchQueue.main.async { self.fail(parsed.id, error.localizedDescription) }
                 }
+            } catch {
+                DispatchQueue.main.async { self.fail(descriptor.id, error.localizedDescription) }
             }
         }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let error, let parsed = Self.parseDescription(task.taskDescription) else { return }
-        stateLock.lock()
+        guard let error, let descriptor = Self.parseDescription(task.taskDescription) else { return }
+
+        taskLock.lock()
         let ignored = ignoredTaskIDs.remove(task.taskIdentifier) != nil
-        stateLock.unlock()
+        taskLock.unlock()
         if ignored { return }
 
         DispatchQueue.main.async {
-            guard let current = self.itemSnapshot(parsed.id) else { return }
+            guard let current = self.itemSnapshot(descriptor.id) else { return }
             if current.state == .paused || current.state == .completed { return }
-            if parsed.kind == "segment" && current.mode != .segmented { return }
-            self.fail(parsed.id, error.localizedDescription)
+            if descriptor.kind == "segment" && current.mode != .segmented { return }
+            self.fail(descriptor.id, error.localizedDescription)
         }
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         DispatchQueue.main.async {
-            if let delegate = UIApplication.shared.delegate as? AppDelegate {
-                let completion = delegate.backgroundCompletionHandler
-                delegate.backgroundCompletionHandler = nil
-                completion?()
-            }
+            guard let delegate = UIApplication.shared.delegate as? AppDelegate else { return }
+            let completion = delegate.backgroundCompletionHandler
+            delegate.backgroundCompletionHandler = nil
+            completion?()
         }
     }
 
-    private func fallbackToSingleAfterRangeFailure(_ id: UUID) {
+    // MARK: - Segment completion
+
+    private func fallbackToSingle(_ id: UUID) {
         guard let item = itemSnapshot(id), item.mode == .segmented, let url = URL(string: item.urlString) else { return }
+
         update(id) {
             $0.mode = .single
             $0.receivedBytes = 0
             $0.segmentCount = 1
             $0.completedSegments = 0
         }
+
         backgroundSession.getAllTasks { tasks in
-            for task in tasks where Self.jobID(from: task.taskDescription) == id && Self.parseDescription(task.taskDescription)?.kind == "segment" {
-                self.stateLock.lock(); self.ignoredTaskIDs.insert(task.taskIdentifier); self.stateLock.unlock()
+            for task in tasks where Self.jobID(from: task.taskDescription) == id {
+                self.taskLock.lock()
+                self.ignoredTaskIDs.insert(task.taskIdentifier)
+                self.taskLock.unlock()
                 task.cancel()
             }
             self.ioQueue.async { try? FileManager.default.removeItem(at: self.partsDirectory(id)) }
@@ -358,16 +390,19 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
 
     private func segmentFinished(_ id: UUID) {
         guard var item = itemSnapshot(id), item.mode == .segmented else { return }
-        let dir = partsDirectory(id)
-        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+
+        let directory = partsDirectory(id)
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.fileSizeKey]
+        )) ?? []
         let parts = files.filter { $0.lastPathComponent.hasPrefix("part-") }
+
         item.completedSegments = parts.count
-        let stableBytes = parts.reduce(Int64(0)) { result, url in
-            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            return result + Int64(size)
-        }
+        let stableBytes = parts.reduce(Int64(0)) { $0 + Self.fileSize($1) }
         item.receivedBytes = min(item.totalBytes, max(item.receivedBytes, stableBytes))
         set(item)
+
         guard parts.count == item.segmentCount else { return }
         assemble(id)
     }
@@ -375,38 +410,41 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
     private func assemble(_ id: UUID) {
         guard let item = itemSnapshot(id) else { return }
         update(id) { $0.state = .assembling }
+
         ioQueue.async {
-            let dir = self.partsDirectory(id)
+            let directory = self.partsDirectory(id)
             let finalURL = self.uniqueFinalURL(for: item)
             FileManager.default.createFile(atPath: finalURL.path, contents: nil)
-            guard let out = try? FileHandle(forWritingTo: finalURL) else {
-                DispatchQueue.main.async { self.fail(id, "Could not create output file") }
-                return
-            }
-            defer { try? out.close() }
 
             do {
+                let output = try FileHandle(forWritingTo: finalURL)
+                defer { try? output.close() }
+
                 for index in 0..<item.segmentCount {
-                    let part = dir.appendingPathComponent(String(format: "part-%03d", index))
-                    let input = try FileHandle(forReadingFrom: part)
-                    while autoreleasepool(invoking: {
-                        let data = try? input.read(upToCount: 4 * 1024 * 1024)
-                        guard let data, !data.isEmpty else { return false }
-                        try? out.write(contentsOf: data)
-                        return true
-                    }) {}
-                    try input.close()
+                    let partURL = directory.appendingPathComponent(String(format: "part-%03d", index))
+                    let input = try FileHandle(forReadingFrom: partURL)
+                    defer { try? input.close() }
+
+                    while true {
+                        let data = try input.read(upToCount: 4 * 1024 * 1024) ?? Data()
+                        if data.isEmpty { break }
+                        try output.write(contentsOf: data)
+                    }
                 }
-                try? FileManager.default.removeItem(at: dir)
+
+                try? FileManager.default.removeItem(at: directory)
+                let finalSize = Self.fileSize(finalURL)
                 DispatchQueue.main.async {
                     self.update(id) {
                         $0.fileName = finalURL.lastPathComponent
                         $0.state = .completed
-                        $0.receivedBytes = $0.totalBytes
+                        if $0.totalBytes <= 0 { $0.totalBytes = finalSize }
+                        $0.receivedBytes = $0.totalBytes > 0 ? $0.totalBytes : finalSize
                         $0.completedSegments = $0.segmentCount
                     }
                 }
             } catch {
+                try? FileManager.default.removeItem(at: finalURL)
                 DispatchQueue.main.async { self.fail(id, error.localizedDescription) }
             }
         }
@@ -419,12 +457,13 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         }
     }
 
+    // MARK: - Persistence
+
     private func restoreTaskStates() {
         backgroundSession.getAllTasks { tasks in
             let activeIDs = Set(tasks.compactMap { Self.jobID(from: $0.taskDescription) })
             DispatchQueue.main.async {
-                for index in self.items.indices {
-                    guard self.items[index].state != .completed else { continue }
+                for index in self.items.indices where self.items[index].state != .completed {
                     self.items[index].state = activeIDs.contains(self.items[index].id) ? .downloading : .paused
                 }
                 self.persistState()
@@ -432,7 +471,11 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         }
     }
 
-    private func update(_ id: UUID, persist: Bool = true, _ change: (inout DownloadItem) -> Void) {
+    private func update(
+        _ id: UUID,
+        persist: Bool = true,
+        _ change: @escaping (inout DownloadItem) -> Void
+    ) {
         if !Thread.isMainThread {
             DispatchQueue.main.async { self.update(id, persist: persist, change) }
             return
@@ -467,10 +510,12 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         let snapshot = items
         ioQueue.async {
             do {
-                let data = try JSONEncoder().encode(snapshot)
                 try? FileManager.default.createDirectory(at: self.supportDirectory(), withIntermediateDirectories: true)
+                let data = try JSONEncoder().encode(snapshot)
                 try data.write(to: self.stateURL(), options: .atomic)
-            } catch { }
+            } catch {
+                // Downloads remain active even if a state snapshot cannot be written.
+            }
         }
     }
 
@@ -480,56 +525,68 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         items = decoded
     }
 
+    // MARK: - Files
+
     private func supportDirectory() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return base.appendingPathComponent("REYDL", isDirectory: true)
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("REYDL", isDirectory: true)
     }
 
     private func downloadsDirectory() -> URL {
-        let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let dir = base.appendingPathComponent("REYDL Downloads", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("REYDL Downloads", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
     }
 
-    private func stateURL() -> URL { supportDirectory().appendingPathComponent("downloads.json") }
-    private func partsDirectory(_ id: UUID) -> URL { supportDirectory().appendingPathComponent("parts/\(id.uuidString)", isDirectory: true) }
+    private func stateURL() -> URL {
+        supportDirectory().appendingPathComponent("downloads.json")
+    }
+
+    private func partsDirectory(_ id: UUID) -> URL {
+        supportDirectory().appendingPathComponent("parts/\(id.uuidString)", isDirectory: true)
+    }
 
     private func uniqueFinalURL(for item: DownloadItem) -> URL {
-        let base = downloadsDirectory()
+        let directory = downloadsDirectory()
         let original = Self.sanitizedFileName(item.fileName)
-        var candidate = base.appendingPathComponent(original)
+        var candidate = directory.appendingPathComponent(original)
         guard FileManager.default.fileExists(atPath: candidate.path) else { return candidate }
+
         let ext = candidate.pathExtension
         let stem = candidate.deletingPathExtension().lastPathComponent
-        var index = 2
+        var suffix = 2
         repeat {
-            let name = ext.isEmpty ? "\(stem) \(index)" : "\(stem) \(index).\(ext)"
-            candidate = base.appendingPathComponent(name)
-            index += 1
+            let filename = ext.isEmpty ? "\(stem) \(suffix)" : "\(stem) \(suffix).\(ext)"
+            candidate = directory.appendingPathComponent(filename)
+            suffix += 1
         } while FileManager.default.fileExists(atPath: candidate.path)
         return candidate
+    }
+
+    private static func fileSize(_ url: URL) -> Int64 {
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
+        return Int64(values?.fileSize ?? 0)
     }
 
     private static func sanitizedFileName(_ input: String) -> String {
         let illegal = CharacterSet(charactersIn: "/\\:?%*|\"<>\n\r\t")
         let cleaned = input.components(separatedBy: illegal).joined(separator: "-")
-        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "download.bin"
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? "download.bin" : cleaned
     }
 
     private static func jobID(from description: String?) -> UUID? {
-        guard let first = description?.split(separator: "|").first else { return nil }
-        return UUID(uuidString: String(first))
+        guard let raw = description?.split(separator: "|").first else { return nil }
+        return UUID(uuidString: String(raw))
     }
 
     private static func parseDescription(_ description: String?) -> (id: UUID, kind: String, index: Int)? {
         guard let description else { return nil }
         let parts = description.split(separator: "|")
-        guard parts.count >= 3, let id = UUID(uuidString: String(parts[0])), let index = Int(parts[2]) else { return nil }
+        guard parts.count >= 3,
+              let id = UUID(uuidString: String(parts[0])),
+              let index = Int(parts[2]) else { return nil }
         return (id, String(parts[1]), index)
     }
-}
-
-private extension String {
-    var nonEmpty: String? { isEmpty ? nil : self }
 }
