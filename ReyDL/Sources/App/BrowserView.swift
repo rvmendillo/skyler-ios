@@ -1,6 +1,32 @@
 import SwiftUI
 import WebKit
 
+private enum REYDLDownloadURLDetector {
+    static let fileExtensions: Set<String> = [
+        "7z", "zip", "rar", "tar", "gz", "tgz", "bz2", "xz",
+        "bin", "dmg", "pkg", "ipa", "apk", "exe", "msi",
+        "pdf", "epub", "mobi", "txt", "rtf",
+        "mp3", "m4a", "aac", "wav", "flac", "ogg",
+        "mp4", "m4v", "mkv", "mov", "avi", "webm",
+        "iso", "img", "csv", "tsv", "json", "xml",
+        "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+        "pages", "numbers", "key"
+    ]
+
+    static func isLikelyDownload(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return false }
+        if fileExtensions.contains(url.pathExtension.lowercased()) { return true }
+
+        let path = url.path.lowercased()
+        let hints = ["/download", "/downloads", "/attachment", "/attachments", "/export", "/file/", "/files/", "/archive", "/asset"]
+        if hints.contains(where: path.contains) { return true }
+
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+        let queryNames = Set((components.queryItems ?? []).map { $0.name.lowercased() })
+        return !queryNames.isDisjoint(with: ["download", "dl", "attachment", "export", "filename", "file"])
+    }
+}
+
 struct BrowserScreen: View {
     @EnvironmentObject private var downloads: DownloadManager
     @State private var address = "https://www.google.com"
@@ -11,14 +37,25 @@ struct BrowserScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Image(systemName: currentURL.scheme?.lowercased() == "https" ? "lock.fill" : "globe")
-                    .foregroundStyle(.secondary)
-                TextField("Address", text: $address)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(.indigo.opacity(0.14))
+                    Image(systemName: currentURL.scheme?.lowercased() == "https" ? "lock.fill" : "globe")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.indigo)
+                }
+                .frame(width: 28, height: 28)
+
+                TextField("Address or direct file URL", text: $address)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onSubmit { navigate() }
-                Button(action: navigate) { Image(systemName: "arrow.right.circle.fill") }
+
+                Button(action: navigate) {
+                    Image(systemName: "arrow.right.circle.fill")
+                        .font(.title3)
+                }
             }
             .padding(10)
             .background(.thinMaterial)
@@ -32,7 +69,7 @@ struct BrowserScreen: View {
                 Button {
                     downloads.add(url: currentURL)
                 } label: {
-                    Label("Download URL", systemImage: "arrow.down.circle")
+                    Label("Send to REYDL", systemImage: "bolt.fill")
                 }
                 Spacer()
                 ShareLink(item: currentURL) { Image(systemName: "square.and.arrow.up") }
@@ -50,7 +87,18 @@ struct BrowserScreen: View {
         if components.scheme?.lowercased() == "http" {
             components.scheme = "https"
         }
-        if let url = components.url { requestedURL = url }
+        guard let url = components.url else { return }
+
+        // ADM/IDM-style direct URL behavior: obvious file URLs go straight to the
+        // download engine instead of first asking WebKit to display binary data.
+        if REYDLDownloadURLDetector.isLikelyDownload(url) {
+            currentURL = url
+            title = "Sent to Downloads"
+            downloads.add(url: url)
+            return
+        }
+
+        requestedURL = url
     }
 }
 
@@ -95,18 +143,36 @@ struct BrowserWebView: UIViewRepresentable {
 
     static let captureScript = #"""
     (() => {
-      const rx = /\.(7z|zip|rar|tar|gz|bz2|xz|dmg|pkg|ipa|apk|exe|msi|pdf|epub|mp3|m4a|wav|flac|mp4|m4v|mkv|mov|avi|webm|iso|img|csv|json|xml|docx?|xlsx?|pptx?)(?:$|[?#])/i;
+      const fileLike = /\.(7z|zip|rar|tar|gz|tgz|bz2|xz|bin|dmg|pkg|ipa|apk|exe|msi|pdf|epub|mobi|mp3|m4a|aac|wav|flac|ogg|mp4|m4v|mkv|mov|avi|webm|iso|img|csv|tsv|json|xml|txt|rtf|docx?|xlsx?|pptx?|pages|numbers|key)(?:$|[?#])/i;
+      const downloadHint = /(?:^|[\/?&=_-])(download|downloads|attachment|attachments|export|file|files|archive|asset|dl)(?:$|[\/?&=_-])/i;
+      const downloadQuery = /[?&](?:download|dl|attachment|export|filename|file)=/i;
+
+      function shouldCapture(href, anchor) {
+        if (!/^https?:/i.test(href || '')) return false;
+        if (anchor && anchor.hasAttribute('download')) return true;
+        if (fileLike.test(href) || downloadQuery.test(href)) return true;
+        try { return downloadHint.test(new URL(href).pathname); } catch (_) { return false; }
+      }
+
       document.addEventListener('click', (event) => {
-        const a = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+        const a = event.target && event.target.closest ? event.target.closest('a[href], area[href]') : null;
         if (!a) return;
         const href = a.href;
-        if (!/^https?:/i.test(href)) return;
-        if (a.hasAttribute('download') || rx.test(href)) {
-          event.preventDefault();
-          event.stopPropagation();
-          window.webkit.messageHandlers.reydlDownload.postMessage({url: href, name: a.getAttribute('download') || ''});
-        }
+        if (!shouldCapture(href, a)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        window.webkit.messageHandlers.reydlDownload.postMessage({url: href, name: a.getAttribute('download') || ''});
       }, true);
+
+      const nativeAnchorClick = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function(...args) {
+        const href = this.href;
+        if (shouldCapture(href, this)) {
+          window.webkit.messageHandlers.reydlDownload.postMessage({url: href, name: this.getAttribute('download') || ''});
+          return;
+        }
+        return nativeAnchorClick.apply(this, args);
+      };
     })();
     """#
 
@@ -141,13 +207,18 @@ struct BrowserWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
-                webView.load(URLRequest(url: url))
+                if REYDLDownloadURLDetector.isLikelyDownload(url) {
+                    parent.downloads.add(url: url)
+                } else {
+                    webView.load(URLRequest(url: url))
+                }
             }
             return nil
         }
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            if navigationAction.shouldPerformDownload, let url = navigationAction.request.url {
+            if let url = navigationAction.request.url,
+               (navigationAction.shouldPerformDownload || REYDLDownloadURLDetector.isLikelyDownload(url)) {
                 parent.downloads.add(url: url)
                 decisionHandler(.cancel)
                 return
@@ -163,17 +234,21 @@ struct BrowserWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
-            if let http = navigationResponse.response as? HTTPURLResponse,
+            let response = navigationResponse.response
+            let mime = response.mimeType?.lowercased() ?? ""
+
+            if let http = response as? HTTPURLResponse,
                let disposition = http.value(forHTTPHeaderField: "Content-Disposition")?.lowercased(),
                disposition.contains("attachment"),
                let url = http.url {
-                parent.downloads.add(url: url, suggestedName: navigationResponse.response.suggestedFilename)
+                parent.downloads.add(url: url, suggestedName: response.suggestedFilename)
                 decisionHandler(.cancel)
                 return
             }
 
-            if !navigationResponse.canShowMIMEType, let url = navigationResponse.response.url {
-                parent.downloads.add(url: url, suggestedName: navigationResponse.response.suggestedFilename)
+            if (mime == "application/octet-stream" || mime == "application/x-binary" || !navigationResponse.canShowMIMEType),
+               let url = response.url {
+                parent.downloads.add(url: url, suggestedName: response.suggestedFilename)
                 decisionHandler(.cancel)
                 return
             }
