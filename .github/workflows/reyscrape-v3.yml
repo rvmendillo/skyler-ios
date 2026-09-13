@@ -20,8 +20,8 @@ jobs:
         run: |
           python3 - <<'PY'
           import base64, gzip, hashlib, pathlib
-          parts = sorted(pathlib.Path('SourceParts').glob('part*.b64'))
-          assert parts, 'No source chunks found'
+          parts = [pathlib.Path(f'SourceParts/part{i:02d}.b64') for i in range(3)]
+          assert all(p.exists() for p in parts), 'One or more source chunks are missing'
           encoded = ''.join(p.read_text().strip() for p in parts)
           data = gzip.decompress(base64.b64decode(encoded))
           expected = '560fda537642ed9772584411c42905f4f6518a8a1ca16ad14f9b6d906a0e89e3'
