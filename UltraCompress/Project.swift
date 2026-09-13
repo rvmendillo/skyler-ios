@@ -16,8 +16,8 @@ let project = Project(
             deploymentTargets: .iOS("18.0"),
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "UltraCompress",
-                "CFBundleShortVersionString": "7.0",
-                "CFBundleVersion": "7",
+                "CFBundleShortVersionString": "8.0",
+                "CFBundleVersion": "8",
                 "UILaunchScreen": [:],
                 "LSSupportsOpeningDocumentsInPlace": true,
                 "UIFileSharingEnabled": true,
@@ -53,7 +53,7 @@ let project = Project(
                     ]
                 ]
             ]),
-            sources: ["SourcesV7/**"],
+            sources: ["SourcesV8/**"],
             resources: ["Resources/**"],
             dependencies: [
                 .package(product: "PLzmaSDK"),
