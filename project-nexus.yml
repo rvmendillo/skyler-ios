@@ -9,7 +9,7 @@ packages:
     from: 0.9.19
   NobodyWho:
     url: https://github.com/nobodywho-ooo/nobodywho-swift.git
-    from: 1.0.0
+    from: 3.0.0
 settings:
   base:
     SWIFT_VERSION: 5.0
@@ -46,6 +46,7 @@ targets:
       - NexusApp/V7ConversationTwin.swift
       - NexusApp/V7LocalLLM.swift
       - NexusApp/V7Storybook.swift
+      - NexusApp/V7Personality.swift
       - NexusApp/V7UX.swift
       - NexusApp/NEXUSApp.swift
       - NexusApp/Views.swift
