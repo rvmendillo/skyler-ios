@@ -40,6 +40,9 @@ final class NexusMultimodalStore: ObservableObject {
     @Published var busy = false
     @Published var lastError = ""
     @Published var results: [NexusFileAnalysisResult] = []
+    @Published var languageDownload: NexusDownloadSnapshot = .zero
+    @Published var visionDownload: NexusDownloadSnapshot = .zero
+    @Published var downloadingPresetID = ""
 
     private var installs: [String:NexusMultimodalInstall] = [:]
     private var model: Model?
@@ -90,6 +93,28 @@ final class NexusMultimodalStore: ObservableObject {
         Self.presets.first { $0.id == selectedPresetID } ?? Self.lfm25
     }
 
+    var combinedDownloadDetail: String {
+        let total = languageDownload.totalBytes + visionDownload.totalBytes
+        let done = languageDownload.downloadedBytes + visionDownload.downloadedBytes
+        let speed = languageDownload.bytesPerSecond + visionDownload.bytesPerSecond
+        guard total > 0 else { return "" }
+        let fraction = Double(done) / Double(total)
+        let doneText = ByteCountFormatter.string(fromByteCount: done, countStyle: .file)
+        let totalText = ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
+        var text = String(format: "%.1f%% • %@ / %@", fraction * 100, doneText, totalText)
+        if speed > 0 {
+            text += String(format: " • %.1f MB/s", speed / 1_048_576.0)
+            if done < total {
+                let eta = Double(total - done) / speed
+                if eta >= 60 { text += String(format: " • ETA %.0fm %.0fs", floor(eta / 60), eta.truncatingRemainder(dividingBy: 60)) }
+                else { text += String(format: " • ETA %.0fs", max(0, eta)) }
+            }
+        }
+        let lanes = languageDownload.activeChunks + visionDownload.activeChunks
+        if lanes > 0 { text += " • \(lanes) parallel lanes" }
+        return text
+    }
+
     func isDownloaded(_ preset: NexusMultimodalPreset) -> Bool {
         guard let i = installs[preset.id] else { return false }
         return FileManager.default.fileExists(atPath: i.baseLocalPath) && FileManager.default.fileExists(atPath: i.projectionLocalPath)
@@ -98,29 +123,59 @@ final class NexusMultimodalStore: ObservableObject {
     func download(_ preset: NexusMultimodalPreset) async {
         guard !busy else { return }
         busy = true
+        downloadingPresetID = preset.id
         lastError = ""
         progress = 0.01
-        status = "Downloading \(preset.name) language weights…"
-        defer { busy = false }
+        languageDownload = .zero
+        visionDownload = .zero
+        status = "Preparing parallel multimodal download • \(preset.name)"
+        defer {
+            busy = false
+            downloadingPresetID = ""
+        }
         do {
-            let base = try await Model.downloadModel(modelPath: preset.basePath, headers: nil) { downloaded, total in
-                let f = total > 0 ? Double(downloaded) / Double(total) : 0
-                Task { @MainActor in self.progress = min(0.52, max(0.01, f * 0.52)) }
+            let baseName = preset.basePath.split(separator: "/").last.map(String.init) ?? "base.gguf"
+            let projectionName = preset.projectionPath.split(separator: "/").last.map(String.init) ?? "mmproj.gguf"
+
+            async let basePath: String = NexusParallelDownloader.download(
+                modelPath: preset.basePath,
+                destinationName: "\(preset.id)-base-\(baseName)",
+                concurrency: 3
+            ) { snapshot in
+                Task { @MainActor in
+                    self.languageDownload = snapshot
+                    self.refreshDownloadProgress(preset)
+                }
             }
-            status = "Downloading \(preset.name) vision projector…"
-            let projection = try await Model.downloadModel(modelPath: preset.projectionPath, headers: nil) { downloaded, total in
-                let f = total > 0 ? Double(downloaded) / Double(total) : 0
-                Task { @MainActor in self.progress = 0.52 + min(0.46, max(0, f * 0.46)) }
+
+            async let projectionPath: String = NexusParallelDownloader.download(
+                modelPath: preset.projectionPath,
+                destinationName: "\(preset.id)-vision-\(projectionName)",
+                concurrency: 3
+            ) { snapshot in
+                Task { @MainActor in
+                    self.visionDownload = snapshot
+                    self.refreshDownloadProgress(preset)
+                }
             }
+
+            let (base, projection) = try await (basePath, projectionPath)
             installs[preset.id] = .init(baseLocalPath: base, projectionLocalPath: projection)
             persistInstalls()
             progress = 1
             status = "Downloaded • \(preset.name) • weights stay off RAM until Load"
         } catch {
             lastError = error.localizedDescription
-            status = "Multimodal download failed"
-            progress = 0
+            status = "Multimodal download interrupted • completed chunks are kept for resume"
+            refreshDownloadProgress(preset)
         }
+    }
+
+    private func refreshDownloadProgress(_ preset: NexusMultimodalPreset) {
+        let total = languageDownload.totalBytes + visionDownload.totalBytes
+        let done = languageDownload.downloadedBytes + visionDownload.downloadedBytes
+        if total > 0 { progress = min(0.99, Double(done) / Double(total)) }
+        status = "Downloading \(preset.name) • \(combinedDownloadDetail)"
     }
 
     func load(_ preset: NexusMultimodalPreset) async {
@@ -175,6 +230,8 @@ final class NexusMultimodalStore: ObservableObject {
             if fm.fileExists(atPath: install.projectionLocalPath) { try fm.removeItem(atPath: install.projectionLocalPath) }
             installs.removeValue(forKey: preset.id)
             persistInstalls()
+            languageDownload = .zero
+            visionDownload = .zero
             progress = 0
             status = "Removed \(preset.name) weights from device storage"
         } catch {
@@ -233,9 +290,7 @@ final class NexusMultimodalStore: ObservableObject {
             return .init(fileName: url.lastPathComponent, kind: "Image • true vision analysis", answer: output.trimmingCharacters(in: .whitespacesAndNewlines))
         }
 
-        if ext == "pdf" {
-            return try await analyzePDF(url: url, question: question, chat: chat)
-        }
+        if ext == "pdf" { return try await analyzePDF(url: url, question: question, chat: chat) }
 
         if textExts.contains(ext) || Self.isLikelyText(url) {
             let text = try Self.readTextCapped(url, maxBytes: 1_200_000, maxCharacters: 48_000)
@@ -303,10 +358,7 @@ final class NexusMultimodalStore: ObservableObject {
     }
 
     private func releaseRuntime(reason: String?) {
-        chat?.stopGeneration()
-        chat = nil
-        model = nil
-        activePresetID = ""
+        chat?.stopGeneration(); chat = nil; model = nil; activePresetID = ""
         if let reason { status = reason }
     }
 
@@ -319,9 +371,7 @@ final class NexusMultimodalStore: ObservableObject {
         defer { try? handle.close() }
         let data = try handle.read(upToCount: maxBytes) ?? Data()
         let decoded = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) ?? ""
-        if decoded.isEmpty {
-            throw NSError(domain: "NEXUS.Multimodal", code: 21, userInfo: [NSLocalizedDescriptionKey: "No readable text was found in this file."])
-        }
+        if decoded.isEmpty { throw NSError(domain: "NEXUS.Multimodal", code: 21, userInfo: [NSLocalizedDescriptionKey: "No readable text was found in this file."]) }
         return String(decoded.prefix(maxCharacters))
     }
 
@@ -331,16 +381,13 @@ final class NexusMultimodalStore: ObservableObject {
     }
 
     private static func downsampleImage(_ url: URL, maxPixel: Int) throws -> URL {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-            throw NSError(domain: "NEXUS.Multimodal", code: 22, userInfo: [NSLocalizedDescriptionKey: "Could not decode image."])
-        }
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { throw NSError(domain: "NEXUS.Multimodal", code: 22, userInfo: [NSLocalizedDescriptionKey: "Could not decode image."]) }
         let options: [CFString:Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceThumbnailMaxPixelSize: maxPixel
         ]
-        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
-              let data = UIImage(cgImage: cg).jpegData(compressionQuality: 0.82) else {
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary), let data = UIImage(cgImage: cg).jpegData(compressionQuality: 0.82) else {
             throw NSError(domain: "NEXUS.Multimodal", code: 23, userInfo: [NSLocalizedDescriptionKey: "Could not prepare image for local vision model."])
         }
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("nexus-mm-\(UUID().uuidString).jpg")
@@ -354,9 +401,7 @@ final class NexusMultimodalStore: ObservableObject {
         let px = CGFloat(maxPixel)
         let size: CGSize = ratio >= 1 ? .init(width: px, height: px / ratio) : .init(width: px * ratio, height: px)
         let image = page.thumbnail(of: size, for: .mediaBox)
-        guard let data = image.jpegData(compressionQuality: 0.78) else {
-            throw NSError(domain: "NEXUS.Multimodal", code: 24, userInfo: [NSLocalizedDescriptionKey: "Could not render PDF page preview."])
-        }
+        guard let data = image.jpegData(compressionQuality: 0.78) else { throw NSError(domain: "NEXUS.Multimodal", code: 24, userInfo: [NSLocalizedDescriptionKey: "Could not render PDF page preview."]) }
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("nexus-pdf-\(index)-\(UUID().uuidString).jpg")
         try data.write(to: out, options: .atomic)
         return out
@@ -365,21 +410,14 @@ final class NexusMultimodalStore: ObservableObject {
     private static func quickLookPreview(_ url: URL, maxPixel: Int) async throws -> URL {
         let scale = await MainActor.run { UIScreen.main.scale }
         let px = CGFloat(maxPixel)
-        let request = QLThumbnailGenerator.Request(fileAt: url,
-                                                   size: CGSize(width: px, height: px),
-                                                   scale: min(scale, 2),
-                                                   representationTypes: .all)
+        let request = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: px, height: px), scale: min(scale, 2), representationTypes: .all)
         let representation: QLThumbnailRepresentation = try await withCheckedThrowingContinuation { continuation in
             QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { rep, error in
                 if let rep { continuation.resume(returning: rep) }
-                else {
-                    continuation.resume(throwing: error ?? NSError(domain: "NEXUS.Multimodal", code: 25, userInfo: [NSLocalizedDescriptionKey: "No system preview is available for this file type."]))
-                }
+                else { continuation.resume(throwing: error ?? NSError(domain: "NEXUS.Multimodal", code: 25, userInfo: [NSLocalizedDescriptionKey: "No system preview is available for this file type."])) }
             }
         }
-        guard let data = representation.uiImage.jpegData(compressionQuality: 0.80) else {
-            throw NSError(domain: "NEXUS.Multimodal", code: 26, userInfo: [NSLocalizedDescriptionKey: "Could not encode system file preview."])
-        }
+        guard let data = representation.uiImage.jpegData(compressionQuality: 0.80) else { throw NSError(domain: "NEXUS.Multimodal", code: 26, userInfo: [NSLocalizedDescriptionKey: "Could not encode system file preview."]) }
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("nexus-preview-\(UUID().uuidString).jpg")
         try data.write(to: out, options: .atomic)
         return out
@@ -405,7 +443,6 @@ struct NexusAnyFilePicker: UIViewControllerRepresentable {
         return picker
     }
     func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
         let parent: NexusAnyFilePicker
         init(parent: NexusAnyFilePicker) { self.parent = parent }
@@ -426,9 +463,8 @@ struct MultimodalLabV8View: View {
                     .font(.subheadline).foregroundStyle(.secondary)
                 if store.busy || store.progress > 0 {
                     ProgressView(value: store.progress) { Text(store.status).font(.caption) }
-                } else {
-                    Text(store.status).font(.caption).foregroundStyle(.secondary)
-                }
+                    if !store.combinedDownloadDetail.isEmpty { Text(store.combinedDownloadDetail).font(.caption2).monospacedDigit().foregroundStyle(.secondary) }
+                } else { Text(store.status).font(.caption).foregroundStyle(.secondary) }
                 if !store.lastError.isEmpty { Text(store.lastError).font(.caption).foregroundStyle(.red) }
             }
 
@@ -441,38 +477,40 @@ struct MultimodalLabV8View: View {
                                 Text("\(preset.approximateDownload) • \(preset.detail)").font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            if store.activePresetID == preset.id {
-                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                            } else if store.isDownloaded(preset) {
-                                Image(systemName: "internaldrive.fill").foregroundStyle(.secondary)
+                            if store.activePresetID == preset.id { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
+                            else if store.isDownloaded(preset) { Image(systemName: "internaldrive.fill").foregroundStyle(.secondary) }
+                        }
+                        if store.downloadingPresetID == preset.id {
+                            if store.languageDownload.totalBytes > 0 {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Language weights").font(.caption).bold()
+                                    ProgressView(value: store.languageDownload.fraction)
+                                    Text(store.languageDownload.detailText).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+                                }
+                            }
+                            if store.visionDownload.totalBytes > 0 {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Vision projector").font(.caption).bold()
+                                    ProgressView(value: store.visionDownload.fraction)
+                                    Text(store.visionDownload.detailText).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+                                }
                             }
                         }
                         HStack {
-                            if !store.isDownloaded(preset) {
-                                Button("Download") { Task { await store.download(preset) } }.buttonStyle(.bordered)
-                            }
-                            Button(store.activePresetID == preset.id ? "Reload" : "Load") { Task { await store.load(preset) } }
-                                .buttonStyle(.borderedProminent).disabled(store.busy)
-                            if store.isDownloaded(preset) {
-                                Button(role: .destructive) { store.removeWeights(preset) } label: { Text("Remove weights") }.buttonStyle(.bordered)
-                            }
+                            if !store.isDownloaded(preset) { Button("Download") { Task { await store.download(preset) } }.buttonStyle(.bordered).disabled(store.busy) }
+                            Button(store.activePresetID == preset.id ? "Reload" : "Load") { Task { await store.load(preset) } }.buttonStyle(.borderedProminent).disabled(store.busy)
+                            if store.isDownloaded(preset) { Button(role: .destructive) { store.removeWeights(preset) } label: { Text("Remove weights") }.buttonStyle(.bordered) }
                         }
                     }.padding(.vertical, 3)
                 }
-                if !store.activePresetID.isEmpty {
-                    Button("Unload model and free RAM") { store.unload() }
-                }
+                if !store.activePresetID.isEmpty { Button("Unload model and free RAM") { store.unload() } }
             }
 
             Section("Files") {
                 Button { showPicker = true } label: { Label(selectedFiles.isEmpty ? "Choose files" : "Add / replace files", systemImage: "paperclip") }
-                ForEach(selectedFiles, id: \.absoluteString) { url in
-                    HStack { Image(systemName: "doc"); Text(url.lastPathComponent).lineLimit(1); Spacer() }
-                }
+                ForEach(selectedFiles, id: \.absoluteString) { url in HStack { Image(systemName: "doc"); Text(url.lastPathComponent).lineLimit(1); Spacer() } }
                 TextField("What should NEXUS analyze? (optional)", text: $question, axis: .vertical).lineLimit(2...5)
-                Button {
-                    Task { await store.analyzeFiles(selectedFiles, question: question) }
-                } label: { Label("Analyze sequentially", systemImage: "sparkles") }
+                Button { Task { await store.analyzeFiles(selectedFiles, question: question) } } label: { Label("Analyze sequentially", systemImage: "sparkles") }
                     .buttonStyle(.borderedProminent)
                     .disabled(selectedFiles.isEmpty || store.activePresetID.isEmpty || store.busy)
             }
@@ -489,17 +527,14 @@ struct MultimodalLabV8View: View {
                 }
             }
 
-            Section("Memory strategy") {
-                Text("Large weights are downloaded to storage without being loaded. NEXUS keeps only one vision model resident, downsamples visual inputs, caps extracted text and PDF pages, processes multiple files sequentially, resets model history between files, and unloads automatically if iOS reports memory pressure. These optimizations preserve the file-analysis and model-management features while reducing peak RAM and thermal load.")
+            Section("Download + memory strategy") {
+                Text("Each multimodal component uses resumable HTTP byte ranges. Language weights and the vision projector download at the same time, each with up to three chunk lanes, so a model can use up to six concurrent network lanes when the server supports ranges. Progress shows percentage, bytes, throughput, ETA and active lanes. Inference still keeps only one vision model resident, downsamples visuals, caps text/PDF context and processes files sequentially to control RAM and heat.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Multimodal Files")
         .sheet(isPresented: $showPicker) {
-            NexusAnyFilePicker { urls in
-                selectedFiles = urls
-                showPicker = false
-            }
+            NexusAnyFilePicker { urls in selectedFiles = urls; showPicker = false }
         }
     }
 }
