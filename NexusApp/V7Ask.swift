@@ -43,9 +43,6 @@ private actor NexusV7AnalysisCache {
         if key == cachedKey, let cachedSnapshot { return cachedSnapshot }
 
         let snapshot = await Task.detached(priority: .userInitiated) {
-            // Keep the expensive, question-independent analysis off the main actor and
-            // compute it only once per vault revision. The report objects are compact;
-            // the large source array is not retained by this cache.
             let comprehensive = ComprehensiveAnalysisEngine.analyze(records)
             let personality = DataPersonalityEngine.analyze(records)
             let life = NexusLifeAnalysisEngine.analyze(records)
@@ -173,7 +170,10 @@ struct AskV7View: View {
                     Text("Apple/on-device NLP + statistics + enabled GGUF models").font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
+                NavigationLink { MultimodalLabV8View() } label: { Image(systemName: "paperclip.circle") }
+                    .accessibilityLabel("Multimodal file analysis")
                 NavigationLink { PortableModelsV7View() } label: { Image(systemName: "cpu") }
+                    .accessibilityLabel("Portable local models")
             }.padding().background(.thinMaterial)
 
             ScrollViewReader { proxy in
