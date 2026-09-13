@@ -68,16 +68,48 @@ targets:
     dependencies:
       - package: ZIPFoundation
       - package: NobodyWho
+      - target: NexusShare
+        embed: true
+      - target: NexusWidget
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rey.nexus
         INFOPLIST_FILE: NexusApp/Info.plist
         CODE_SIGN_ENTITLEMENTS: NexusApp/NEXUS.entitlements
+  NexusShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - NexusShare/ShareViewController.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rey.nexus.share
+        PRODUCT_NAME: NexusShare
+        INFOPLIST_FILE: NexusShare/Info.plist
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        CODE_SIGNING_ALLOWED: NO
+  NexusWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - NexusWidget/NexusWidget.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rey.nexus.widget
+        PRODUCT_NAME: NexusWidget
+        INFOPLIST_FILE: NexusWidget/Info.plist
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        CODE_SIGNING_ALLOWED: NO
 schemes:
   NEXUS:
     build:
       targets:
         NEXUS: all
+        NexusShare: all
+        NexusWidget: all
     run:
       config: Debug
     archive:
