@@ -144,7 +144,7 @@ struct ConnectionsV3View: View {
                     if !model.importStatus.isEmpty {
                         Label(model.importStatus, systemImage: model.importStatus.lowercased().contains("imported") ? "checkmark.circle.fill" : "info.circle")
                             .font(.subheadline)
-                            .foregroundStyle(model.importStatus.lowercased().contains("imported") ? .green : .secondary)
+                            .foregroundStyle(model.importStatus.lowercased().contains("imported") ? Color.green : Color.secondary)
                     }
                 }
             }
@@ -162,7 +162,9 @@ struct ConnectionsV3View: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(connector.name).font(.headline)
                             Text(connector.detail).font(.caption).foregroundStyle(.secondary)
-                            Text(connector.status).font(.caption2).foregroundStyle(connector.status.contains("Connected") || connector.status.contains("records") ? .green : .tertiary)
+                            Text(connector.status)
+                                .font(.caption2)
+                                .foregroundStyle(connector.status.contains("Connected") || connector.status.contains("records") ? Color.green : Color.secondary)
                         }
                         Spacer()
                         Button(nativeBusy == connector.id ? "…" : "Connect") {
@@ -537,7 +539,9 @@ struct InteractiveGraphCanvas: View {
         let positions = layout(size: size)
         let nearest = graph.nodes.compactMap { node -> (KnowledgeGraphNode, CGFloat)? in
             guard let p = positions[node.id] else { return nil }
-            let d = hypot(p.x-local.x, p.y-local.y)
+            let dx = p.x - local.x
+            let dy = p.y - local.y
+            let d = sqrt(dx * dx + dy * dy)
             return d <= radius(for: node) + 18 ? (node,d) : nil
         }.min { $0.1 < $1.1 }?.0
         withAnimation(.spring(response: 0.25)) { selected = nearest }
@@ -570,8 +574,8 @@ struct InteractiveGraphCanvas: View {
                 let angle = Double(globalIndex + index) * golden + phase(category)
                 let jitter = CGFloat(index % 3) * 14
                 let r = min(size.width,size.height) * factor + jitter
-                let x = center.x + cos(angle) * r
-                let y = center.y + sin(angle) * r * 0.78
+                let x = center.x + CGFloat(cos(angle)) * r
+                let y = center.y + CGFloat(sin(angle)) * r * 0.78
                 positions[node.id] = CGPoint(x: max(36,min(size.width-36,x)), y: max(42,min(size.height-48,y)))
             }
             globalIndex += nodes.count
