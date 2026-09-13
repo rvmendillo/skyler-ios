@@ -16,9 +16,9 @@ struct NexusV8FileItem: Identifiable, Codable, Hashable {
     var ext: String { url.pathExtension.lowercased() }
 
     var kindLabel: String {
-        if ["png","jpg","jpeg","heic","heif","webp","gif","bmp","tif","tiff"].contains(ext) { return "Image" }
+        if NexusV8FileSupport.imageExtensions.contains(ext) { return "Image" }
         if ext == "pdf" { return "PDF" }
-        if ["csv","tsv"].contains(ext) { return "Table" }
+        if ["csv", "tsv"].contains(ext) { return "Table" }
         if NexusV8FileSupport.textExtensions.contains(ext) { return "Text" }
         return "File"
     }
@@ -49,7 +49,7 @@ enum NexusV8FileSupport {
         }
         var text = ""
         for index in 0..<min(pdf.pageCount, maxPages) {
-            guard let page = pdf.page(at: index), let pageText = page.string, !pageText.isEmpty else { continue }
+            guard let pageText = pdf.page(at: index)?.string, !pageText.isEmpty else { continue }
             text += "\n--- Page \(index + 1) ---\n\(pageText)"
             if text.count >= maxCharacters { break }
         }
@@ -71,12 +71,9 @@ final class NexusV8FileLibrary: ObservableObject {
 
     @Published private(set) var files: [NexusV8FileItem] = []
     @Published var lastError = ""
-
     private let defaultsKey = "nexus.v8.file.library.v1"
 
-    private init() {
-        load()
-    }
+    private init() { load() }
 
     @discardableResult
     func importURLs(_ urls: [URL]) throws -> [NexusV8FileItem] {
@@ -89,13 +86,12 @@ final class NexusV8FileLibrary: ObservableObject {
         var imported: [NexusV8FileItem] = []
         for source in urls {
             let scoped = source.startAccessingSecurityScopedResource()
-            defer { if scoped { source.stopAccessingSecurityScopedResource() } }
-
             let safeName = source.lastPathComponent.isEmpty ? "file" : source.lastPathComponent
             let destination = base.appendingPathComponent("\(UUID().uuidString)-\(safeName)")
             do {
                 if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
                 try fm.copyItem(at: source, to: destination)
+                if scoped { source.stopAccessingSecurityScopedResource() }
                 let values = try destination.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
                 let item = NexusV8FileItem(
                     id: UUID(),
@@ -108,6 +104,7 @@ final class NexusV8FileLibrary: ObservableObject {
                 files.insert(item, at: 0)
                 imported.append(item)
             } catch {
+                if scoped { source.stopAccessingSecurityScopedResource() }
                 lastError = "Could not import \(safeName): \(error.localizedDescription)"
                 throw error
             }
@@ -172,7 +169,7 @@ final class NexusV8AIHub: ObservableObject {
 
             let polished = await polish(question: question, content: combined)
             status = "Ready"
-            return NexusV8SharedAnswer(text: polished, evidence: Array(Set(evidence)).prefix(14).map { $0 })
+            return NexusV8SharedAnswer(text: polished, evidence: unique(evidence, limit: 14))
         }
 
         status = "Thinking across your NEXUS data…"
@@ -186,9 +183,14 @@ final class NexusV8AIHub: ObservableObject {
 
     func analyzeFiles(_ items: [NexusV8FileItem], question rawQuestion: String) async -> NexusV8SharedAnswer {
         guard !items.isEmpty else { return NexusV8SharedAnswer(text: "Attach at least one file first.", evidence: []) }
-        let question = rawQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let ownsBusyState = !busy
+        if ownsBusyState { busy = true; lastError = "" }
+        defer { if ownsBusyState { busy = false } }
+
+        let clean = rawQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        let question = clean.isEmpty
             ? "Analyze these files together. Explain the main content, important details, relationships, patterns, and anything uncertain."
-            : rawQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
+            : clean
 
         status = "Reading file contents…"
         var evidenceBlocks: [String] = []
@@ -244,12 +246,12 @@ final class NexusV8AIHub: ObservableObject {
             }
         }
 
-        let appleView = await NexusIntelligenceEngine.respond(
-            question: "Answer the user's question from the supplied file evidence. Be practical and flag missing/uncertain information.",
+        let systemView = await NexusIntelligenceEngine.respond(
+            question: "Answer the user's question from the supplied file evidence. Be practical and flag missing or uncertain information.",
             context: "QUESTION: \(question)\n\nFILES:\n\(String(joined.prefix(18_000)))"
         )
-        if let appleView, !appleView.isEmpty {
-            modelViews.append("System intelligence: \(String(appleView.prefix(4500)))")
+        if let systemView, !systemView.isEmpty {
+            modelViews.append("System intelligence: \(String(systemView.prefix(4500)))")
             evidenceLabels.append("System intelligence cross-check")
         }
 
@@ -272,22 +274,22 @@ final class NexusV8AIHub: ObservableObject {
            ), !response.isEmpty {
             final = response
             evidenceLabels.append("Final synthesis: shared local language model")
-        } else if let appleView, !appleView.isEmpty {
-            final = appleView
-        } else if let visionFirst = vision.results.first?.answer, !visionFirst.isEmpty {
-            final = vision.results.count == 1 ? visionFirst : vision.results.map { "\($0.fileName):\n\($0.answer)" }.joined(separator: "\n\n")
+        } else if let systemView, !systemView.isEmpty {
+            final = systemView
+        } else if !vision.results.isEmpty {
+            final = vision.results.map { "\($0.fileName):\n\($0.answer)" }.joined(separator: "\n\n")
         } else {
-            final = fallbackFileSummary(items: items, evidence: joined, question: question)
+            final = fallbackFileSummary(items: items, evidence: joined)
         }
 
         status = "Ready"
-        return NexusV8SharedAnswer(text: friendlyCleanup(final), evidence: Array(Set(evidenceLabels)).prefix(14).map { $0 })
+        return NexusV8SharedAnswer(text: friendlyCleanup(final), evidence: unique(evidenceLabels, limit: 14))
     }
 
     private func polish(question: String, content: String) async -> String {
         let portable = NexusPortableModelStore.shared
         let prompt = """
-        Rewrite the draft below as the final answer to the user. Preserve factual meaning and uncertainty, but make it feel like a high-quality ChatGPT/Claude response rather than a diagnostic report. Do not mention internal engines, consensus machinery, or implementation details unless the user asked for them.
+        Rewrite the draft below as the final answer to the user. Preserve factual meaning and uncertainty, but make it feel like a high-quality ChatGPT or Claude response rather than a diagnostic report. Do not mention internal engines, consensus machinery, or implementation details unless the user asked for them.
 
         USER QUESTION: \(question)
 
@@ -312,10 +314,20 @@ final class NexusV8AIHub: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func fallbackFileSummary(items: [NexusV8FileItem], evidence: String, question: String) -> String {
+    private func fallbackFileSummary(items: [NexusV8FileItem], evidence: String) -> String {
         let names = items.map(\.name).joined(separator: ", ")
         let readable = evidence.split(separator: "\n").prefix(24).joined(separator: "\n")
-        return "I imported \(items.count) file\(items.count == 1 ? "" : "s"): \(names). I could read the text/metadata shown below, but no loaded language or vision model was available to produce a deeper synthesis yet.\n\n\(readable)\n\nLoad a shared language model for richer answers, and a vision model when you want NEXUS to understand images or page layouts."
+        return "I imported \(items.count) file\(items.count == 1 ? "" : "s"): \(names). I could read the text and metadata below, but no loaded language or vision model was available for a deeper synthesis yet.\n\n\(readable)\n\nLoad a shared language model for richer answers, and a vision model when you want NEXUS to understand images or page layouts."
+    }
+
+    private func unique(_ values: [String], limit: Int) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for value in values where seen.insert(value).inserted {
+            result.append(value)
+            if result.count >= limit { break }
+        }
+        return result
     }
 }
 
@@ -431,8 +443,7 @@ struct AskV8View: View {
         .navigationBarTitleDisplayMode(.inline)
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             do {
-                let urls = try result.get()
-                let imported = try library.importURLs(urls)
+                let imported = try library.importURLs(try result.get())
                 attachedIDs.formUnion(imported.map(\.id))
                 importError = ""
             } catch {
@@ -476,8 +487,18 @@ struct FilesV8View: View {
             }
 
             Section("Shared AI") {
-                HStack { Label("Language", systemImage: "text.bubble.fill"); Spacer(); Text(language.activeModelID.isEmpty ? "Not loaded" : "Loaded").foregroundStyle(language.activeModelID.isEmpty ? .secondary : .green) }
-                HStack { Label("Vision", systemImage: "eye.fill"); Spacer(); Text(vision.activePresetID.isEmpty ? "Not loaded" : "Loaded").foregroundStyle(vision.activePresetID.isEmpty ? .secondary : .green) }
+                HStack {
+                    Label("Language", systemImage: "text.bubble.fill")
+                    Spacer()
+                    Text(language.activeModelID.isEmpty ? "Not loaded" : "Loaded")
+                        .foregroundStyle(language.activeModelID.isEmpty ? Color.secondary : Color.green)
+                }
+                HStack {
+                    Label("Vision", systemImage: "eye.fill")
+                    Spacer()
+                    Text(vision.activePresetID.isEmpty ? "Not loaded" : "Loaded")
+                        .foregroundStyle(vision.activePresetID.isEmpty ? Color.secondary : Color.green)
+                }
                 NavigationLink("Language model manager") { PortableModelsV8View() }
                 NavigationLink("Vision model manager") { MultimodalLabV8View() }
                 Text("The same loaded models are reused by Chat and file analysis. For images and scanned/page-layout understanding, load a vision model. Text, CSV and embedded PDF text remain readable without one.")
@@ -492,7 +513,7 @@ struct FilesV8View: View {
                     HStack(spacing: 10) {
                         Button { toggle(item) } label: {
                             Image(systemName: selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(selectedIDs.contains(item.id) ? .cyan : .secondary)
+                                .foregroundStyle(selectedIDs.contains(item.id) ? Color.cyan : Color.secondary)
                         }.buttonStyle(.plain)
                         NavigationLink { NexusV8FileViewer(item: item) } label: {
                             VStack(alignment: .leading, spacing: 3) {
@@ -502,7 +523,12 @@ struct FilesV8View: View {
                             }
                         }
                     }
-                    .swipeActions { Button(role: .destructive) { selectedIDs.remove(item.id); library.remove(item) } label: { Label("Delete", systemImage: "trash") } }
+                    .swipeActions {
+                        Button(role: .destructive) {
+                            selectedIDs.remove(item.id)
+                            library.remove(item)
+                        } label: { Label("Delete", systemImage: "trash") }
+                    }
                 }
             }
 
@@ -515,9 +541,13 @@ struct FilesV8View: View {
                         answer = result.text
                         evidence = result.evidence
                     }
-                } label: { Label(selected.isEmpty ? "Select files above" : "Analyze \(selected.count) file\(selected.count == 1 ? "" : "s")", systemImage: "sparkles") }
-                    .disabled(selected.isEmpty || hub.busy)
-                if hub.busy { ProgressView().overlay(alignment: .leading) { Text(hub.status).font(.caption).padding(.leading, 28) } }
+                } label: {
+                    Label(selected.isEmpty ? "Select files above" : "Analyze \(selected.count) file\(selected.count == 1 ? "" : "s")", systemImage: "sparkles")
+                }
+                .disabled(selected.isEmpty || hub.busy)
+                if hub.busy {
+                    HStack { ProgressView(); Text(hub.status).font(.caption).foregroundStyle(.secondary) }
+                }
             }
 
             if !answer.isEmpty {
@@ -525,7 +555,9 @@ struct FilesV8View: View {
                     Text(answer).textSelection(.enabled)
                     if !evidence.isEmpty {
                         DisclosureGroup("What NEXUS used") {
-                            ForEach(Array(evidence.enumerated()), id: \.offset) { _, item in Text("• \(item)").font(.caption).foregroundStyle(.secondary) }
+                            ForEach(Array(evidence.enumerated()), id: \.offset) { _, item in
+                                Text("• \(item)").font(.caption).foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
@@ -537,12 +569,15 @@ struct FilesV8View: View {
                 let imported = try library.importURLs(try result.get())
                 selectedIDs.formUnion(imported.map(\.id))
                 importError = ""
-            } catch { importError = error.localizedDescription }
+            } catch {
+                importError = error.localizedDescription
+            }
         }
     }
 
     private func toggle(_ item: NexusV8FileItem) {
-        if selectedIDs.contains(item.id) { selectedIDs.remove(item.id) } else { selectedIDs.insert(item.id) }
+        if selectedIDs.contains(item.id) { selectedIDs.remove(item.id) }
+        else { selectedIDs.insert(item.id) }
     }
 }
 
@@ -555,7 +590,7 @@ struct NexusV8FileViewer: View {
                 NexusV8ImageViewer(url: item.url)
             } else if item.ext == "pdf" {
                 NexusV8PDFViewer(url: item.url)
-            } else if ["csv","tsv"].contains(item.ext) {
+            } else if ["csv", "tsv"].contains(item.ext) {
                 NexusV8CSVViewer(url: item.url, delimiter: item.ext == "tsv" ? "\t" : ",")
             } else if NexusV8FileSupport.textExtensions.contains(item.ext) {
                 NexusV8TextViewer(url: item.url)
@@ -583,12 +618,14 @@ private struct NexusV8ImageViewer: View {
             } else {
                 ContentUnavailableView("Image unavailable", systemImage: "photo.badge.exclamationmark")
             }
-        }.background(Color.black.opacity(0.35))
+        }
+        .background(Color.black.opacity(0.35))
     }
 }
 
 private struct NexusV8PDFViewer: UIViewRepresentable {
     let url: URL
+
     func makeUIView(context: Context) -> PDFView {
         let view = PDFView()
         view.autoScales = true
@@ -597,19 +634,20 @@ private struct NexusV8PDFViewer: UIViewRepresentable {
         view.document = PDFDocument(url: url)
         return view
     }
+
     func updateUIView(_ uiView: PDFView, context: Context) {
-        if uiView.document?.documentURL != url { uiView.document = PDFDocument(url: url) }
+        if uiView.document == nil { uiView.document = PDFDocument(url: url) }
     }
 }
 
 private struct NexusV8TextViewer: View {
     let url: URL
     @State private var text = "Loading…"
-    @State private var error = ""
+    @State private var errorText = ""
 
     var body: some View {
         ScrollView([.horizontal, .vertical]) {
-            Text(error.isEmpty ? text : error)
+            Text(errorText.isEmpty ? text : errorText)
                 .font(.system(.body, design: .monospaced))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -617,7 +655,7 @@ private struct NexusV8TextViewer: View {
         }
         .task {
             do { text = try NexusV8FileSupport.readableText(url) }
-            catch { error = error.localizedDescription }
+            catch { errorText = error.localizedDescription }
         }
     }
 }
@@ -626,12 +664,12 @@ private struct NexusV8CSVViewer: View {
     let url: URL
     let delimiter: Character
     @State private var rows: [[String]] = []
-    @State private var error = ""
+    @State private var errorText = ""
 
     var body: some View {
         ScrollView([.horizontal, .vertical]) {
-            if !error.isEmpty {
-                Text(error).foregroundStyle(.red).padding()
+            if !errorText.isEmpty {
+                Text(errorText).foregroundStyle(.red).padding()
             } else {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
@@ -653,8 +691,10 @@ private struct NexusV8CSVViewer: View {
         .task {
             do {
                 let text = try NexusV8FileSupport.readableText(url, maxBytes: 1_500_000, maxCharacters: 180_000)
-                rows = text.split(whereSeparator: \.isNewline).prefix(1000).map { parseCSVLine(String($0), delimiter: delimiter) }
-            } catch { error = error.localizedDescription }
+                rows = text.split(whereSeparator: { $0.isNewline }).prefix(1000).map { parseCSVLine(String($0), delimiter: delimiter) }
+            } catch {
+                errorText = error.localizedDescription
+            }
         }
     }
 
@@ -722,8 +762,12 @@ struct PortableModelsV8View: View {
                 Text(store.memorySummary).font(.caption2).foregroundStyle(.secondary)
                 if store.busy || store.progress > 0 {
                     ProgressView(value: store.progress) { Text(store.status).font(.caption) }
-                    if store.downloadSnapshot.totalBytes > 0 { Text(store.downloadSnapshot.detailText).font(.caption2).monospacedDigit().foregroundStyle(.secondary) }
-                } else { Text(store.status).font(.caption).foregroundStyle(.secondary) }
+                    if store.downloadSnapshot.totalBytes > 0 {
+                        Text(store.downloadSnapshot.detailText).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text(store.status).font(.caption).foregroundStyle(.secondary)
+                }
                 if !store.lastError.isEmpty { Text(store.lastError).font(.caption).foregroundStyle(.red) }
             }
 
@@ -742,7 +786,12 @@ struct PortableModelsV8View: View {
             }
         }
         .navigationTitle("Shared AI Models")
-        .sheet(isPresented: $picker) { NexusGGUFDocumentPicker { url in picker = false; Task { await store.importGGUF(url) } } }
+        .sheet(isPresented: $picker) {
+            NexusGGUFDocumentPicker { url in
+                picker = false
+                Task { await store.importGGUF(url) }
+            }
+        }
         .task {
             for oldID in ["qwen3-4b-q4", "qwen3-8b-q4"] {
                 if let old = store.models.first(where: { $0.id == oldID }), !store.isDownloaded(old) { store.delete(old) }
@@ -750,7 +799,8 @@ struct PortableModelsV8View: View {
         }
     }
 
-    @ViewBuilder private func presetRow(_ preset: NexusPortableModel) -> some View {
+    @ViewBuilder
+    private func presetRow(_ preset: NexusPortableModel) -> some View {
         let existing = store.models.first(where: { $0.id == preset.id })
         VStack(alignment: .leading, spacing: 7) {
             HStack {
@@ -759,13 +809,19 @@ struct PortableModelsV8View: View {
                     Text("\(preset.approximateSize) • \(preset.source)").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if let model = existing, store.activeModelID == model.id { Label("Loaded", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green) }
+                if let model = existing, store.activeModelID == model.id {
+                    Label("Loaded", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+                }
             }
             if let model = existing {
                 HStack {
-                    if !store.isDownloaded(model) { Button("Download") { Task { await store.download(model) } }.buttonStyle(.bordered).disabled(store.busy) }
-                    Button(store.activeModelID == model.id ? "Reload" : "Load") { Task { await store.load(model) } }.buttonStyle(.borderedProminent).disabled(store.busy)
-                    Button(model.enabledForEnsemble ? "In ensemble" : "Use for cross-checks") { store.toggleEnsemble(model) }.buttonStyle(.bordered)
+                    if !store.isDownloaded(model) {
+                        Button("Download") { Task { await store.download(model) } }.buttonStyle(.bordered).disabled(store.busy)
+                    }
+                    Button(store.activeModelID == model.id ? "Reload" : "Load") { Task { await store.load(model) } }
+                        .buttonStyle(.borderedProminent).disabled(store.busy)
+                    Button(model.enabledForEnsemble ? "Cross-check on" : "Use for cross-checks") { store.toggleEnsemble(model) }
+                        .buttonStyle(.bordered)
                 }
             } else {
                 Button("Add model") { store.addPreset(preset) }.buttonStyle(.bordered)
@@ -773,7 +829,8 @@ struct PortableModelsV8View: View {
         }.padding(.vertical, 3)
     }
 
-    @ViewBuilder private func modelRow(_ model: NexusPortableModel) -> some View {
+    @ViewBuilder
+    private func modelRow(_ model: NexusPortableModel) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -785,9 +842,13 @@ struct PortableModelsV8View: View {
                 else if store.isDownloaded(model) { Image(systemName: "internaldrive.fill").foregroundStyle(.secondary) }
             }
             HStack {
-                if model.isPreset && !store.isDownloaded(model) { Button("Download") { Task { await store.download(model) } }.buttonStyle(.bordered).disabled(store.busy) }
-                Button(store.activeModelID == model.id ? "Reload" : "Load") { Task { await store.load(model) } }.buttonStyle(.borderedProminent).disabled(store.busy)
-                Button(model.enabledForEnsemble ? "Cross-check on" : "Cross-check off") { store.toggleEnsemble(model) }.buttonStyle(.bordered)
+                if model.isPreset && !store.isDownloaded(model) {
+                    Button("Download") { Task { await store.download(model) } }.buttonStyle(.bordered).disabled(store.busy)
+                }
+                Button(store.activeModelID == model.id ? "Reload" : "Load") { Task { await store.load(model) } }
+                    .buttonStyle(.borderedProminent).disabled(store.busy)
+                Button(model.enabledForEnsemble ? "Cross-check on" : "Cross-check off") { store.toggleEnsemble(model) }
+                    .buttonStyle(.bordered)
             }
         }.padding(.vertical, 3)
     }
