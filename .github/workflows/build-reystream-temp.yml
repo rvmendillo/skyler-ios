@@ -19,7 +19,7 @@ jobs:
           echo "0a760351b274644d9b12b70cb8c33e34c0ac61ddedd3570c64d39b0467cdbcdd  ReyStream-Xcode-Source.zip" | shasum -a 256 -c -
           mkdir -p reystream-src
           unzip -q ReyStream-Xcode-Source.zip -d reystream-src
-          cp .reystream_v11_overlay/ReyStream/Views/YouTubeView.swift reystream-src/ReyStream/Views/YouTubeView.swift
+          cp .reystream_v11_overlay/ReyStream/Views/YouTubeViewNoKey.swift reystream-src/ReyStream/Views/YouTubeView.swift
           cp .reystream_v11_overlay/ReyStream/Views/DownloadsView.swift reystream-src/ReyStream/Views/DownloadsView.swift
           cp .reystream_v11_overlay/ReyStream/Views/SettingsView.swift reystream-src/ReyStream/Views/SettingsView.swift
           cp .reystream_v11_overlay/ReyStream/Services/DownloadManager.swift reystream-src/ReyStream/Services/DownloadManager.swift
