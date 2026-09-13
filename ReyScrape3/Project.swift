@@ -12,11 +12,15 @@ let project = Project(
             deploymentTargets: .iOS("17.0"),
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "ReyScrape",
-                "CFBundleShortVersionString": "3.1",
-                "CFBundleVersion": "310",
+                "CFBundleShortVersionString": "3.2",
+                "CFBundleVersion": "320",
                 "UILaunchScreen": [:],
                 "UIApplicationSceneManifest": [
                     "UIApplicationSupportsMultipleScenes": false
+                ],
+                "NSAppTransportSecurity": [
+                    "NSAllowsArbitraryLoadsInWebContent": true,
+                    "NSAllowsLocalNetworking": true
                 ]
             ]),
             sources: ["Sources/**"],
