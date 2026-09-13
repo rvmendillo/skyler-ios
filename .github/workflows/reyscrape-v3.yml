@@ -1,4 +1,4 @@
-name: Build ReyScrape 3.1 Unified IPA
+name: Build ReyScrape 3.2 Unified Web IPA
 
 on:
   push:
@@ -24,16 +24,17 @@ jobs:
           assert all(p.exists() for p in parts), 'One or more source chunks are missing'
           encoded = ''.join(p.read_text().strip() for p in parts)
           data = gzip.decompress(base64.b64decode(encoded))
-          old_expected = '560fda537642ed9772584411c42905f4f6518a8a1ca16ad14f9b6d906a0e89e3'
+          base_expected = '560fda537642ed9772584411c42905f4f6518a8a1ca16ad14f9b6d906a0e89e3'
           actual = hashlib.sha256(data).hexdigest()
-          assert actual == old_expected, f'Base source checksum mismatch: {actual}'
+          assert actual == base_expected, f'Base source checksum mismatch: {actual}'
           pathlib.Path('Sources').mkdir(exist_ok=True)
           pathlib.Path('Sources/ReyScrapeApp.swift').write_bytes(data)
 
-          patch_encoded = pathlib.Path('Patches/reyscrape31.patch.gz.b64').read_text().strip()
-          patch_data = gzip.decompress(base64.b64decode(patch_encoded))
-          pathlib.Path('/tmp/reyscrape31.patch').write_bytes(patch_data)
-          print(f'Restored base source {len(data)} bytes, sha256={actual}; patch={len(patch_data)} bytes')
+          for version in ('31', '32'):
+              encoded_patch = pathlib.Path(f'Patches/reyscrape{version}.patch.gz.b64').read_text().strip()
+              patch_data = gzip.decompress(base64.b64decode(encoded_patch))
+              pathlib.Path(f'/tmp/reyscrape{version}.patch').write_bytes(patch_data)
+              print(f'Prepared {version} patch: {len(patch_data)} bytes')
           PY
           patch -p1 < /tmp/reyscrape31.patch
           python3 - <<'PY'
@@ -41,9 +42,28 @@ jobs:
           source = pathlib.Path('Sources/ReyScrapeApp.swift').read_bytes()
           expected = '599b1ed6d6684f5cb5b574de4f960de701baf97303d3ec119120c6c0eef00ec3'
           actual = hashlib.sha256(source).hexdigest()
-          assert actual == expected, f'Unified source checksum mismatch: {actual}'
-          print(f'Unified ReyScrape source {len(source)} bytes, sha256={actual}')
+          assert actual == expected, f'3.1 source checksum mismatch: {actual}'
+          print(f'ReyScrape 3.1 source {len(source)} bytes, sha256={actual}')
           PY
+          patch -p1 < /tmp/reyscrape32.patch
+          python3 - <<'PY'
+          import hashlib, pathlib
+          source = pathlib.Path('Sources/ReyScrapeApp.swift').read_bytes()
+          expected = '95e9707a21bfa506865f180c9ad3ac5e05c1d603d9dcafa62f1786f74b0571cb'
+          actual = hashlib.sha256(source).hexdigest()
+          assert actual == expected, f'3.2 source checksum mismatch: {actual}'
+          print(f'ReyScrape 3.2 source {len(source)} bytes, sha256={actual}')
+          PY
+
+      - name: Verify WebScraper resources
+        working-directory: ReyScrape3
+        run: |
+          test -s Resources/scraper.js
+          test -s Resources/catalog.html
+          test -s Resources/table.html
+          test -s Resources/quotes.html
+          grep -q 'globalThis.ReyScrape' Resources/scraper.js
+          grep -q 'Pick a column' Resources/scraper.js
 
       - name: Generate ReyScrape app icon
         working-directory: ReyScrape3
@@ -84,7 +104,6 @@ jobs:
           ])!
           gradient.draw(in: bg, angle: -45)
 
-          // Subtle globe.
           let globeRect = NSRect(x: 150, y: 150, width: 724, height: 724)
           let globe = NSBezierPath(ovalIn: globeRect)
           NSColor(calibratedRed: 0.01, green: 0.16, blue: 0.38, alpha: 0.95).setFill()
@@ -108,7 +127,6 @@ jobs:
               p.stroke()
           }
 
-          // Search lens.
           let lensRect = NSRect(x: 220, y: 240, width: 520, height: 520)
           let lensGlow = NSBezierPath(ovalIn: lensRect)
           lensGlow.lineWidth = 70
@@ -134,7 +152,6 @@ jobs:
           NSColor.white.withAlphaComponent(0.96).setStroke()
           handle.stroke()
 
-          // Crown / Rey mark.
           let crown = NSBezierPath()
           crown.move(to: NSPoint(x: 338, y: 752))
           crown.line(to: NSPoint(x: 402, y: 880))
@@ -150,7 +167,6 @@ jobs:
           NSColor.white.withAlphaComponent(0.96).setStroke()
           crown.stroke()
 
-          // Central anonymous-search silhouette.
           let hood = NSBezierPath()
           hood.move(to: NSPoint(x: 355, y: 565))
           hood.curve(to: NSPoint(x: 512, y: 680), controlPoint1: NSPoint(x: 392, y: 650), controlPoint2: NSPoint(x: 455, y: 680))
@@ -182,7 +198,7 @@ jobs:
       - name: Upload unified source
         uses: actions/upload-artifact@v4
         with:
-          name: ReyScrape-3.1-unified-source
+          name: ReyScrape-3.2-unified-web-source
           path: ReyScrape3/Sources/ReyScrapeApp.swift
           if-no-files-found: error
 
@@ -211,13 +227,18 @@ jobs:
             CODE_SIGN_IDENTITY='' \
             build | tee build.log
 
-      - name: Verify bundle identity and icon
+      - name: Verify unified app
         working-directory: ReyScrape3
         run: |
           APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
           test -n "$APP_PATH"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")" = "com.rvmendillo.reyscrape"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "3.1"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "3.2"
+          test -s "$APP_PATH/scraper.js"
+          test -s "$APP_PATH/catalog.html"
+          test -s "$APP_PATH/table.html"
+          test -s "$APP_PATH/quotes.html"
+          grep -q 'globalThis.ReyScrape' "$APP_PATH/scraper.js"
           find "$APP_PATH" -maxdepth 2 -iname '*AppIcon*' -print
 
       - name: Package IPA
@@ -228,11 +249,11 @@ jobs:
           rm -rf Payload
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          ditto -c -k --sequesterRsrc --keepParent Payload ReyScrape-3.1-unified-unsigned.ipa
+          ditto -c -k --sequesterRsrc --keepParent Payload ReyScrape-3.2-unified-web-unsigned.ipa
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ReyScrape-3.1-unified-unsigned-ipa
-          path: ReyScrape3/ReyScrape-3.1-unified-unsigned.ipa
+          name: ReyScrape-3.2-unified-web-unsigned-ipa
+          path: ReyScrape3/ReyScrape-3.2-unified-web-unsigned.ipa
           if-no-files-found: error
