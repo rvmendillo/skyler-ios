@@ -15,18 +15,17 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
             UserDefaults.standard.set(clamped, forKey: Self.segmentLimitKey)
         }
     }
+    @Published private var segmentProgressByJob: [UUID: [Int: Double]] = [:]
 
     private static let segmentLimitKey = "reydl.segmentLimit"
     private static let legacySessionIdentifier = "com.rvmendillo.reydl.background.v2"
-    private static let userAgent = "REYDL/1.1.1 (iOS; Accelerated Download Manager)"
+    private static let userAgent = "REYDL/1.1.2 (iOS; Accelerated Download Manager)"
 
     private let ioQueue = DispatchQueue(label: "com.rvmendillo.reydl.io", qos: .utility)
     private let taskLock = NSLock()
     private var ignoredTaskIDs = Set<Int>()
     private var fallbackJobs = Set<UUID>()
 
-    /// Primary transport. A normal URLSession starts immediately and has proven far more
-    /// reliable for sideloaded builds than making every transfer a background-session task.
     private lazy var liveSession: URLSession = {
         let config = URLSessionConfiguration.default
         config.waitsForConnectivity = true
@@ -44,7 +43,6 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }()
 
-    /// Kept only to cancel/clean up tasks created by older REYDL versions.
     private lazy var legacyBackgroundSession: URLSession = {
         let config = URLSessionConfiguration.background(withIdentifier: Self.legacySessionIdentifier)
         config.waitsForConnectivity = true
@@ -111,6 +109,14 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         add(url: url, suggestedName: name)
     }
 
+    func segmentProgress(for item: DownloadItem) -> [Double] {
+        guard item.mode == .segmented, item.segmentCount > 0 else { return [] }
+        let snapshot = segmentProgressByJob[item.id] ?? [:]
+        return (0..<item.segmentCount).map { index in
+            min(1, max(0, snapshot[index] ?? 0))
+        }
+    }
+
     func pause(_ id: UUID) {
         liveSession.getAllTasks { tasks in
             let matching = tasks.filter { Self.jobID(from: $0.taskDescription) == id }
@@ -151,6 +157,7 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
             }
         }
         DispatchQueue.main.async {
+            self.segmentProgressByJob.removeValue(forKey: id)
             self.items.removeAll { $0.id == id }
             self.persistState()
         }
@@ -171,6 +178,7 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         taskLock.lock()
         fallbackJobs.remove(id)
         taskLock.unlock()
+        segmentProgressByJob.removeValue(forKey: id)
         update(id) {
             $0.state = .probing
             $0.mode = .unknown
@@ -183,8 +191,6 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         probe(id, overrideURL: url)
     }
 
-    /// HEAD is used only as a fast capability hint. A watchdog starts a real transfer
-    /// after four seconds even if a server/CDN gives HEAD special treatment or stalls it.
     private func probe(_ id: UUID, overrideURL: URL? = nil) {
         guard let item = itemSnapshot(id), let url = overrideURL ?? URL(string: item.urlString) else { return }
 
@@ -250,6 +256,7 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         item.segmentCount = count
         item.completedSegments = 0
         item.errorMessage = nil
+        segmentProgressByJob[id] = Dictionary(uniqueKeysWithValues: (0..<count).map { ($0, 0.0) })
         set(item)
 
         ioQueue.sync {
@@ -277,6 +284,7 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
     private func startSingle(id: UUID, url: URL) {
         guard let current = itemSnapshot(id), current.state == .probing || current.mode == .segmented else { return }
 
+        segmentProgressByJob.removeValue(forKey: id)
         update(id) {
             $0.state = .downloading
             $0.mode = .single
@@ -342,6 +350,12 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         }
 
         DispatchQueue.main.async {
+            if descriptor.kind == "segment", totalBytesExpectedToWrite > 0 {
+                var values = self.segmentProgressByJob[descriptor.id] ?? [:]
+                values[descriptor.index] = min(1, max(0, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)))
+                self.segmentProgressByJob[descriptor.id] = values
+            }
+
             self.update(descriptor.id, persist: false) { item in
                 if item.mode == .single {
                     item.receivedBytes = totalBytesWritten
@@ -372,39 +386,41 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
                 return
             }
 
-            ioQueue.async {
-                let directory = self.partsDirectory(descriptor.id)
-                try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                let destination = directory.appendingPathComponent(String(format: "part-%03d", descriptor.index))
-                try? FileManager.default.removeItem(at: destination)
-                do {
-                    try FileManager.default.moveItem(at: location, to: destination)
-                    DispatchQueue.main.async { self.segmentFinished(descriptor.id) }
-                } catch {
-                    DispatchQueue.main.async { self.fail(descriptor.id, error.localizedDescription) }
+            let directory = partsDirectory(descriptor.id)
+            let destination = directory.appendingPathComponent(String(format: "part-%03d", descriptor.index))
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let size = try claimDownloadedFile(from: location, to: destination)
+                guard size > 0 else { throw Self.emptyFileError() }
+                DispatchQueue.main.async {
+                    var values = self.segmentProgressByJob[descriptor.id] ?? [:]
+                    values[descriptor.index] = 1
+                    self.segmentProgressByJob[descriptor.id] = values
+                    self.segmentFinished(descriptor.id)
                 }
+            } catch {
+                DispatchQueue.main.async { self.fail(descriptor.id, "Could not save thread \(descriptor.index + 1): \(error.localizedDescription)") }
             }
             return
         }
 
-        ioQueue.async {
-            let finalURL = self.uniqueFinalURL(for: item)
-            do {
-                try? FileManager.default.createDirectory(at: finalURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try FileManager.default.moveItem(at: location, to: finalURL)
-                let size = Self.fileSize(finalURL)
-                DispatchQueue.main.async {
-                    self.update(descriptor.id) {
-                        $0.fileName = finalURL.lastPathComponent
-                        $0.state = .completed
-                        $0.completedSegments = 1
-                        if $0.totalBytes <= 0 { $0.totalBytes = size }
-                        $0.receivedBytes = $0.totalBytes > 0 ? $0.totalBytes : size
-                    }
+        let finalURL = uniqueFinalURL(for: item)
+        do {
+            let size = try claimDownloadedFile(from: location, to: finalURL)
+            guard size > 0 else { throw Self.emptyFileError() }
+            DispatchQueue.main.async {
+                self.segmentProgressByJob.removeValue(forKey: descriptor.id)
+                self.update(descriptor.id) {
+                    $0.fileName = finalURL.lastPathComponent
+                    $0.state = .completed
+                    $0.completedSegments = 1
+                    $0.totalBytes = size
+                    $0.receivedBytes = size
+                    $0.errorMessage = nil
                 }
-            } catch {
-                DispatchQueue.main.async { self.fail(descriptor.id, error.localizedDescription) }
             }
+        } catch {
+            DispatchQueue.main.async { self.fail(descriptor.id, "Download finished, but REYDL could not persist the file: \(error.localizedDescription)") }
         }
     }
 
@@ -444,6 +460,7 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         taskLock.unlock()
         guard !alreadyFallingBack else { return }
 
+        segmentProgressByJob.removeValue(forKey: id)
         update(id) {
             $0.mode = .single
             $0.receivedBytes = 0
@@ -467,6 +484,7 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
     }
 
     private func startSingleFromFallback(id: UUID, url: URL) {
+        segmentProgressByJob.removeValue(forKey: id)
         update(id) {
             $0.state = .downloading
             $0.mode = .single
@@ -510,8 +528,6 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
 
             do {
                 let output = try FileHandle(forWritingTo: finalURL)
-                defer { try? output.close() }
-
                 for index in 0..<item.segmentCount {
                     let partURL = directory.appendingPathComponent(String(format: "part-%03d", index))
                     let input = try FileHandle(forReadingFrom: partURL)
@@ -520,23 +536,36 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
                         if data.isEmpty { break }
                         try output.write(contentsOf: data)
                     }
-                    try? input.close()
+                    try input.close()
+                }
+                try output.synchronize()
+                try output.close()
+
+                let finalSize = Self.fileSize(finalURL)
+                guard finalSize > 0 else { throw Self.emptyFileError() }
+                if item.totalBytes > 0, finalSize != item.totalBytes {
+                    throw NSError(
+                        domain: "REYDL",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "Joined file size \(finalSize) does not match expected size \(item.totalBytes). Parts were kept for safety."]
+                    )
                 }
 
                 try? FileManager.default.removeItem(at: directory)
-                let finalSize = Self.fileSize(finalURL)
                 DispatchQueue.main.async {
+                    self.segmentProgressByJob.removeValue(forKey: id)
                     self.update(id) {
                         $0.fileName = finalURL.lastPathComponent
                         $0.state = .completed
-                        if $0.totalBytes <= 0 { $0.totalBytes = finalSize }
-                        $0.receivedBytes = $0.totalBytes > 0 ? $0.totalBytes : finalSize
+                        $0.totalBytes = finalSize
+                        $0.receivedBytes = finalSize
                         $0.completedSegments = $0.segmentCount
+                        $0.errorMessage = nil
                     }
                 }
             } catch {
                 try? FileManager.default.removeItem(at: finalURL)
-                DispatchQueue.main.async { self.fail(id, error.localizedDescription) }
+                DispatchQueue.main.async { self.fail(id, "Could not assemble/save file: \(error.localizedDescription)") }
             }
         }
     }
@@ -661,6 +690,36 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         return candidate
     }
 
+    /// URLSession's temporary download location is valid only during didFinishDownloadingTo.
+    /// Claim it synchronously before returning from that delegate callback.
+    private func claimDownloadedFile(from source: URL, to destination: URL) throws -> Int64 {
+        let manager = FileManager.default
+        try manager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if manager.fileExists(atPath: destination.path) {
+            try manager.removeItem(at: destination)
+        }
+
+        do {
+            try manager.moveItem(at: source, to: destination)
+        } catch {
+            if manager.fileExists(atPath: destination.path) {
+                try? manager.removeItem(at: destination)
+            }
+            try manager.copyItem(at: source, to: destination)
+            try? manager.removeItem(at: source)
+        }
+
+        guard manager.fileExists(atPath: destination.path) else {
+            throw NSError(domain: "REYDL", code: 3, userInfo: [NSLocalizedDescriptionKey: "Saved file is missing after transfer."])
+        }
+        let size = Self.fileSize(destination)
+        guard size > 0 else {
+            try? manager.removeItem(at: destination)
+            throw Self.emptyFileError()
+        }
+        return size
+    }
+
     private static func totalLength(from response: HTTPURLResponse) -> Int64 {
         if let raw = response.value(forHTTPHeaderField: "Content-Length"), let value = Int64(raw), value > 0 {
             return value
@@ -671,6 +730,10 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
     private static func fileSize(_ url: URL) -> Int64 {
         let values = try? url.resourceValues(forKeys: [.fileSizeKey])
         return Int64(values?.fileSize ?? 0)
+    }
+
+    private static func emptyFileError() -> NSError {
+        NSError(domain: "REYDL", code: 1, userInfo: [NSLocalizedDescriptionKey: "The saved file is empty."])
     }
 
     private static func sanitizedFileName(_ input: String) -> String {
