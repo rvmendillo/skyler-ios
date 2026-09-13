@@ -137,7 +137,7 @@ struct NexusAnimatedStoryScene: View {
 
     var body: some View {
         GeometryReader { geo in
-            TimelineView(PeriodicTimelineSchedule(from: Date(), by: 1.0 / 30.0)) { timeline in
+            SwiftUI.TimelineView(PeriodicTimelineSchedule(from: Date(), by: 1.0 / 30.0)) { timeline in
                 let t = timeline.date.timeIntervalSinceReferenceDate
                 ZStack {
                     LinearGradient(colors: palette, startPoint: .topLeading, endPoint: .bottomTrailing)
