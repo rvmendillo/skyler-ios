@@ -18,9 +18,18 @@ let project = Project(
                 "CFBundleDisplayName": "UltraCompress",
                 "UILaunchScreen": [:],
                 "LSSupportsOpeningDocumentsInPlace": true,
-                "UIFileSharingEnabled": true
+                "UIFileSharingEnabled": true,
+                "CFBundleDocumentTypes": [
+                    [
+                        "CFBundleTypeName": "Compressible File",
+                        "CFBundleTypeRole": "Editor",
+                        "LSHandlerRank": "Alternate",
+                        "LSItemContentTypes": ["public.data", "public.archive", "public.folder"]
+                    ]
+                ]
             ]),
             sources: ["Sources/**"],
+            resources: ["Resources/**"],
             dependencies: [
                 .package(product: "PLzmaSDK"),
                 .package(product: "Zip")
@@ -28,7 +37,8 @@ let project = Project(
             settings: .settings(base: [
                 "SWIFT_VERSION": "6.0",
                 "TARGETED_DEVICE_FAMILY": "1,2",
-                "CODE_SIGN_STYLE": "Automatic"
+                "CODE_SIGN_STYLE": "Automatic",
+                "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon"
             ])
         )
     ]
