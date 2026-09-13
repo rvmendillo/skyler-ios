@@ -19,8 +19,8 @@ targets:
       path: Sources/App/Info.plist
       properties:
         CFBundleDisplayName: REYDL
-        CFBundleShortVersionString: "1.0.2"
-        CFBundleVersion: "3"
+        CFBundleShortVersionString: "1.1.0"
+        CFBundleVersion: "4"
         UILaunchScreen: {}
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
@@ -38,6 +38,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.rvmendillo.reydl
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - target: ReyDLExtension
         embed: true
@@ -54,8 +55,8 @@ targets:
       path: Sources/Extension/Info.plist
       properties:
         CFBundleDisplayName: REYDL for Safari
-        CFBundleShortVersionString: "1.0.2"
-        CFBundleVersion: "3"
+        CFBundleShortVersionString: "1.1.0"
+        CFBundleVersion: "4"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.Safari.web-extension
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SafariWebExtensionHandler
