@@ -17,22 +17,39 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
     }
 
     private static let segmentLimitKey = "reydl.segmentLimit"
-    private static let sessionIdentifier = "com.rvmendillo.reydl.background.v2"
+    private static let legacySessionIdentifier = "com.rvmendillo.reydl.background.v2"
+    private static let userAgent = "REYDL/1.1.1 (iOS; Accelerated Download Manager)"
 
     private let ioQueue = DispatchQueue(label: "com.rvmendillo.reydl.io", qos: .utility)
     private let taskLock = NSLock()
     private var ignoredTaskIDs = Set<Int>()
+    private var fallbackJobs = Set<UUID>()
 
-    private lazy var backgroundSession: URLSession = {
-        let config = URLSessionConfiguration.background(withIdentifier: Self.sessionIdentifier)
+    /// Primary transport. A normal URLSession starts immediately and has proven far more
+    /// reliable for sideloaded builds than making every transfer a background-session task.
+    private lazy var liveSession: URLSession = {
+        let config = URLSessionConfiguration.default
         config.waitsForConnectivity = true
-        config.isDiscretionary = false
-        config.sessionSendsLaunchEvents = true
         config.allowsExpensiveNetworkAccess = true
         config.allowsConstrainedNetworkAccess = true
         config.httpMaximumConnectionsPerHost = 64
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 60 * 60 * 24 * 7
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.httpAdditionalHeaders = [
+            "User-Agent": Self.userAgent,
+            "Accept": "*/*",
+            "Accept-Encoding": "identity"
+        ]
+        return URLSession(configuration: config, delegate: self, delegateQueue: nil)
+    }()
+
+    /// Kept only to cancel/clean up tasks created by older REYDL versions.
+    private lazy var legacyBackgroundSession: URLSession = {
+        let config = URLSessionConfiguration.background(withIdentifier: Self.legacySessionIdentifier)
+        config.waitsForConnectivity = true
+        config.isDiscretionary = false
+        config.sessionSendsLaunchEvents = true
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }()
 
@@ -41,8 +58,9 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         segmentLimit = savedLimit == 0 ? 16 : savedLimit
         super.init()
         loadState()
-        _ = backgroundSession
-        restoreTaskStates()
+        _ = liveSession
+        _ = legacyBackgroundSession
+        retireLegacyTasksAndRestoreState()
     }
 
     // MARK: - Public API
@@ -94,8 +112,9 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
     }
 
     func pause(_ id: UUID) {
-        backgroundSession.getAllTasks { tasks in
-            tasks.filter { Self.jobID(from: $0.taskDescription) == id }.forEach { $0.suspend() }
+        liveSession.getAllTasks { tasks in
+            let matching = tasks.filter { Self.jobID(from: $0.taskDescription) == id }
+            matching.forEach { $0.suspend() }
             DispatchQueue.main.async {
                 self.update(id) { $0.state = .paused }
             }
@@ -103,7 +122,7 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
     }
 
     func resume(_ id: UUID) {
-        backgroundSession.getAllTasks { tasks in
+        liveSession.getAllTasks { tasks in
             let matching = tasks.filter { Self.jobID(from: $0.taskDescription) == id }
             if matching.isEmpty {
                 DispatchQueue.main.async { self.restart(id) }
@@ -149,6 +168,9 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         guard let item = itemSnapshot(id), let url = URL(string: item.urlString) else { return }
         cancelTasks(for: id)
         ioQueue.async { try? FileManager.default.removeItem(at: self.partsDirectory(id)) }
+        taskLock.lock()
+        fallbackJobs.remove(id)
+        taskLock.unlock()
         update(id) {
             $0.state = .probing
             $0.mode = .unknown
@@ -161,20 +183,33 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         probe(id, overrideURL: url)
     }
 
+    /// HEAD is used only as a fast capability hint. A watchdog starts a real transfer
+    /// after four seconds even if a server/CDN gives HEAD special treatment or stalls it.
     private func probe(_ id: UUID, overrideURL: URL? = nil) {
         guard let item = itemSnapshot(id), let url = overrideURL ?? URL(string: item.urlString) else { return }
-        var request = URLRequest(url: url)
+
+        var request = baseRequest(url: url)
         request.httpMethod = "HEAD"
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.timeoutInterval = 30
+        request.timeoutInterval = 12
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            guard let current = self.itemSnapshot(id), current.state == .probing else { return }
+            self.startSingle(id: id, url: url)
+        }
 
         URLSession.shared.dataTask(with: request) { _, response, error in
-            guard let http = response as? HTTPURLResponse, error == nil else {
-                DispatchQueue.main.async { self.startSingle(id: id, url: url) }
+            guard let current = self.itemSnapshot(id), current.state == .probing else { return }
+
+            guard let http = response as? HTTPURLResponse, error == nil,
+                  (200...399).contains(http.statusCode) else {
+                DispatchQueue.main.async {
+                    guard let latest = self.itemSnapshot(id), latest.state == .probing else { return }
+                    self.startSingle(id: id, url: url)
+                }
                 return
             }
 
-            let total = http.expectedContentLength
+            let total = Self.totalLength(from: http)
             let acceptsRanges = (http.value(forHTTPHeaderField: "Accept-Ranges") ?? "")
                 .lowercased().contains("bytes")
             let suggestedName = response?.suggestedFilename.map { Self.sanitizedFileName($0) }
@@ -182,12 +217,14 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
             let modified = http.value(forHTTPHeaderField: "Last-Modified")
 
             DispatchQueue.main.async {
+                guard let latest = self.itemSnapshot(id), latest.state == .probing else { return }
                 self.update(id) {
                     if let suggestedName, !suggestedName.isEmpty { $0.fileName = suggestedName }
                     if total > 0 { $0.totalBytes = total }
                     $0.etag = etag
                     $0.lastModified = modified
                 }
+
                 if acceptsRanges && total >= 2 * 1024 * 1024 {
                     self.startSegmented(id: id, url: url, total: total)
                 } else {
@@ -198,10 +235,10 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
     }
 
     private func startSegmented(id: UUID, url: URL, total: Int64) {
-        guard var item = itemSnapshot(id) else { return }
+        guard var item = itemSnapshot(id), item.state == .probing else { return }
 
         let maxRanges = max(2, min(64, segmentLimit))
-        let targetChunk: Int64 = 8 * 1024 * 1024
+        let targetChunk: Int64 = 16 * 1024 * 1024
         let desiredRanges = max(2, Int((total + targetChunk - 1) / targetChunk))
         let count = min(maxRanges, desiredRanges)
         let chunkSize = (total + Int64(count) - 1) / Int64(count)
@@ -225,19 +262,21 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
             let end = min(total - 1, start + chunkSize - 1)
             guard start <= end else { continue }
 
-            var request = URLRequest(url: url)
+            var request = baseRequest(url: url)
             request.setValue("bytes=\(start)-\(end)", forHTTPHeaderField: "Range")
             if let validator = item.etag ?? item.lastModified {
                 request.setValue(validator, forHTTPHeaderField: "If-Range")
             }
 
-            let task = backgroundSession.downloadTask(with: request)
+            let task = liveSession.downloadTask(with: request)
             task.taskDescription = "\(id.uuidString)|segment|\(index)"
             task.resume()
         }
     }
 
     private func startSingle(id: UUID, url: URL) {
+        guard let current = itemSnapshot(id), current.state == .probing || current.mode == .segmented else { return }
+
         update(id) {
             $0.state = .downloading
             $0.mode = .single
@@ -246,20 +285,42 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
             $0.completedSegments = 0
             $0.errorMessage = nil
         }
-        let task = backgroundSession.downloadTask(with: url)
+
+        let task = liveSession.downloadTask(with: baseRequest(url: url))
         task.taskDescription = "\(id.uuidString)|single|0"
         task.resume()
     }
 
+    private func baseRequest(url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 60
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("*/*", forHTTPHeaderField: "Accept")
+        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        return request
+    }
+
     private func cancelTasks(for id: UUID) {
-        backgroundSession.getAllTasks { tasks in
+        liveSession.getAllTasks { tasks in
             for task in tasks where Self.jobID(from: task.taskDescription) == id {
-                self.taskLock.lock()
-                self.ignoredTaskIDs.insert(task.taskIdentifier)
-                self.taskLock.unlock()
+                self.markIgnored(task)
                 task.cancel()
             }
         }
+        legacyBackgroundSession.getAllTasks { tasks in
+            for task in tasks where Self.jobID(from: task.taskDescription) == id {
+                self.markIgnored(task)
+                task.cancel()
+            }
+        }
+    }
+
+    private func markIgnored(_ task: URLSessionTask) {
+        taskLock.lock()
+        ignoredTaskIDs.insert(task.taskIdentifier)
+        taskLock.unlock()
     }
 
     // MARK: - URLSession delegates
@@ -271,9 +332,17 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         totalBytesWritten: Int64,
         totalBytesExpectedToWrite: Int64
     ) {
-        guard let id = Self.jobID(from: downloadTask.taskDescription) else { return }
+        guard let descriptor = Self.parseDescription(downloadTask.taskDescription) else { return }
+
+        if descriptor.kind == "segment",
+           let http = downloadTask.response as? HTTPURLResponse,
+           http.statusCode != 206 {
+            DispatchQueue.main.async { self.fallbackToSingle(descriptor.id) }
+            return
+        }
+
         DispatchQueue.main.async {
-            self.update(id, persist: false) { item in
+            self.update(descriptor.id, persist: false) { item in
                 if item.mode == .single {
                     item.receivedBytes = totalBytesWritten
                     if item.totalBytes <= 0, totalBytesExpectedToWrite > 0 {
@@ -369,6 +438,12 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
     private func fallbackToSingle(_ id: UUID) {
         guard let item = itemSnapshot(id), item.mode == .segmented, let url = URL(string: item.urlString) else { return }
 
+        taskLock.lock()
+        let alreadyFallingBack = fallbackJobs.contains(id)
+        if !alreadyFallingBack { fallbackJobs.insert(id) }
+        taskLock.unlock()
+        guard !alreadyFallingBack else { return }
+
         update(id) {
             $0.mode = .single
             $0.receivedBytes = 0
@@ -376,16 +451,33 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
             $0.completedSegments = 0
         }
 
-        backgroundSession.getAllTasks { tasks in
+        liveSession.getAllTasks { tasks in
             for task in tasks where Self.jobID(from: task.taskDescription) == id {
-                self.taskLock.lock()
-                self.ignoredTaskIDs.insert(task.taskIdentifier)
-                self.taskLock.unlock()
+                self.markIgnored(task)
                 task.cancel()
             }
             self.ioQueue.async { try? FileManager.default.removeItem(at: self.partsDirectory(id)) }
-            DispatchQueue.main.async { self.startSingle(id: id, url: url) }
+            DispatchQueue.main.async {
+                self.taskLock.lock()
+                self.fallbackJobs.remove(id)
+                self.taskLock.unlock()
+                self.startSingleFromFallback(id: id, url: url)
+            }
         }
+    }
+
+    private func startSingleFromFallback(id: UUID, url: URL) {
+        update(id) {
+            $0.state = .downloading
+            $0.mode = .single
+            $0.receivedBytes = 0
+            $0.segmentCount = 1
+            $0.completedSegments = 0
+            $0.errorMessage = nil
+        }
+        let task = liveSession.downloadTask(with: baseRequest(url: url))
+        task.taskDescription = "\(id.uuidString)|single|0"
+        task.resume()
     }
 
     private func segmentFinished(_ id: UUID) {
@@ -423,13 +515,12 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
                 for index in 0..<item.segmentCount {
                     let partURL = directory.appendingPathComponent(String(format: "part-%03d", index))
                     let input = try FileHandle(forReadingFrom: partURL)
-                    defer { try? input.close() }
-
                     while true {
                         let data = try input.read(upToCount: 4 * 1024 * 1024) ?? Data()
                         if data.isEmpty { break }
                         try output.write(contentsOf: data)
                     }
+                    try? input.close()
                 }
 
                 try? FileManager.default.removeItem(at: directory)
@@ -457,14 +548,20 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
         }
     }
 
-    // MARK: - Persistence
+    // MARK: - Persistence / migration
 
-    private func restoreTaskStates() {
-        backgroundSession.getAllTasks { tasks in
-            let activeIDs = Set(tasks.compactMap { Self.jobID(from: $0.taskDescription) })
+    private func retireLegacyTasksAndRestoreState() {
+        legacyBackgroundSession.getAllTasks { tasks in
+            for task in tasks {
+                self.markIgnored(task)
+                task.cancel()
+            }
             DispatchQueue.main.async {
                 for index in self.items.indices where self.items[index].state != .completed {
-                    self.items[index].state = activeIDs.contains(self.items[index].id) ? .downloading : .paused
+                    self.items[index].state = .paused
+                    if self.items[index].errorMessage == nil {
+                        self.items[index].errorMessage = "Tap resume to restart with the REYDL live engine."
+                    }
                 }
                 self.persistState()
             }
@@ -514,7 +611,7 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
                 let data = try JSONEncoder().encode(snapshot)
                 try data.write(to: self.stateURL(), options: .atomic)
             } catch {
-                // Downloads remain active even if a state snapshot cannot be written.
+                // Active transfers continue even if persistence fails.
             }
         }
     }
@@ -562,6 +659,13 @@ final class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDeleg
             suffix += 1
         } while FileManager.default.fileExists(atPath: candidate.path)
         return candidate
+    }
+
+    private static func totalLength(from response: HTTPURLResponse) -> Int64 {
+        if let raw = response.value(forHTTPHeaderField: "Content-Length"), let value = Int64(raw), value > 0 {
+            return value
+        }
+        return response.expectedContentLength > 0 ? response.expectedContentLength : 0
     }
 
     private static func fileSize(_ url: URL) -> Int64 {
