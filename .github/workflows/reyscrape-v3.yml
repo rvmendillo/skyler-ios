@@ -1,4 +1,4 @@
-name: Build ReyScrape 3 IPA
+name: Build ReyScrape 3.1 Unified IPA
 
 on:
   push:
@@ -15,7 +15,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Restore Swift source
+      - name: Restore and upgrade Swift source
         working-directory: ReyScrape3
         run: |
           python3 - <<'PY'
@@ -24,18 +24,165 @@ jobs:
           assert all(p.exists() for p in parts), 'One or more source chunks are missing'
           encoded = ''.join(p.read_text().strip() for p in parts)
           data = gzip.decompress(base64.b64decode(encoded))
-          expected = '560fda537642ed9772584411c42905f4f6518a8a1ca16ad14f9b6d906a0e89e3'
+          old_expected = '560fda537642ed9772584411c42905f4f6518a8a1ca16ad14f9b6d906a0e89e3'
           actual = hashlib.sha256(data).hexdigest()
-          assert actual == expected, f'Source checksum mismatch: {actual}'
+          assert actual == old_expected, f'Base source checksum mismatch: {actual}'
           pathlib.Path('Sources').mkdir(exist_ok=True)
           pathlib.Path('Sources/ReyScrapeApp.swift').write_bytes(data)
-          print(f'Restored {len(data)} bytes, sha256={actual}')
+
+          patch_encoded = pathlib.Path('Patches/reyscrape31.patch.gz.b64').read_text().strip()
+          patch_data = gzip.decompress(base64.b64decode(patch_encoded))
+          pathlib.Path('/tmp/reyscrape31.patch').write_bytes(patch_data)
+          print(f'Restored base source {len(data)} bytes, sha256={actual}; patch={len(patch_data)} bytes')
+          PY
+          patch -p1 < /tmp/reyscrape31.patch
+          python3 - <<'PY'
+          import hashlib, pathlib
+          source = pathlib.Path('Sources/ReyScrapeApp.swift').read_bytes()
+          expected = '599b1ed6d6684f5cb5b574de4f960de701baf97303d3ec119120c6c0eef00ec3'
+          actual = hashlib.sha256(source).hexdigest()
+          assert actual == expected, f'Unified source checksum mismatch: {actual}'
+          print(f'Unified ReyScrape source {len(source)} bytes, sha256={actual}')
           PY
 
-      - name: Upload restored source
+      - name: Generate ReyScrape app icon
+        working-directory: ReyScrape3
+        run: |
+          mkdir -p Resources/Assets.xcassets/AppIcon.appiconset
+          cat > Resources/Assets.xcassets/Contents.json <<'JSON'
+          {
+            "info" : { "author" : "xcode", "version" : 1 }
+          }
+          JSON
+          cat > Resources/Assets.xcassets/AppIcon.appiconset/Contents.json <<'JSON'
+          {
+            "images" : [
+              {
+                "filename" : "AppIcon.png",
+                "idiom" : "universal",
+                "platform" : "ios",
+                "size" : "1024x1024"
+              }
+            ],
+            "info" : { "author" : "xcode", "version" : 1 }
+          }
+          JSON
+          cat > /tmp/make_icon.swift <<'SWIFT'
+          import AppKit
+
+          let size = NSSize(width: 1024, height: 1024)
+          let image = NSImage(size: size)
+          image.lockFocus()
+          NSGraphicsContext.current?.shouldAntialias = true
+
+          let full = NSRect(origin: .zero, size: size)
+          let bg = NSBezierPath(roundedRect: full.insetBy(dx: 8, dy: 8), xRadius: 230, yRadius: 230)
+          let gradient = NSGradient(colors: [
+              NSColor(calibratedRed: 0.015, green: 0.035, blue: 0.11, alpha: 1),
+              NSColor(calibratedRed: 0.02, green: 0.12, blue: 0.32, alpha: 1),
+              NSColor(calibratedRed: 0.00, green: 0.55, blue: 0.95, alpha: 1)
+          ])!
+          gradient.draw(in: bg, angle: -45)
+
+          // Subtle globe.
+          let globeRect = NSRect(x: 150, y: 150, width: 724, height: 724)
+          let globe = NSBezierPath(ovalIn: globeRect)
+          NSColor(calibratedRed: 0.01, green: 0.16, blue: 0.38, alpha: 0.95).setFill()
+          globe.fill()
+          NSColor(calibratedRed: 0.20, green: 0.72, blue: 1.0, alpha: 0.38).setStroke()
+          globe.lineWidth = 8
+          globe.stroke()
+
+          for inset in [100.0, 190.0] {
+              let e = NSBezierPath(ovalIn: globeRect.insetBy(dx: inset, dy: 34))
+              e.lineWidth = 5
+              NSColor(calibratedRed: 0.30, green: 0.80, blue: 1.0, alpha: 0.18).setStroke()
+              e.stroke()
+          }
+          for y in [330.0, 512.0, 694.0] {
+              let p = NSBezierPath()
+              p.move(to: NSPoint(x: 190, y: y))
+              p.line(to: NSPoint(x: 835, y: y))
+              p.lineWidth = 4
+              NSColor(calibratedRed: 0.25, green: 0.78, blue: 1, alpha: 0.18).setStroke()
+              p.stroke()
+          }
+
+          // Search lens.
+          let lensRect = NSRect(x: 220, y: 240, width: 520, height: 520)
+          let lensGlow = NSBezierPath(ovalIn: lensRect)
+          lensGlow.lineWidth = 70
+          NSColor(calibratedRed: 0.0, green: 0.72, blue: 1.0, alpha: 0.32).setStroke()
+          lensGlow.stroke()
+          let lens = NSBezierPath(ovalIn: lensRect)
+          lens.lineWidth = 42
+          NSColor.white.withAlphaComponent(0.95).setStroke()
+          lens.stroke()
+
+          let handleGlow = NSBezierPath()
+          handleGlow.move(to: NSPoint(x: 650, y: 315))
+          handleGlow.line(to: NSPoint(x: 850, y: 120))
+          handleGlow.lineWidth = 90
+          handleGlow.lineCapStyle = .round
+          NSColor(calibratedRed: 0.0, green: 0.70, blue: 1.0, alpha: 0.30).setStroke()
+          handleGlow.stroke()
+          let handle = NSBezierPath()
+          handle.move(to: NSPoint(x: 650, y: 315))
+          handle.line(to: NSPoint(x: 850, y: 120))
+          handle.lineWidth = 58
+          handle.lineCapStyle = .round
+          NSColor.white.withAlphaComponent(0.96).setStroke()
+          handle.stroke()
+
+          // Crown / Rey mark.
+          let crown = NSBezierPath()
+          crown.move(to: NSPoint(x: 338, y: 752))
+          crown.line(to: NSPoint(x: 402, y: 880))
+          crown.line(to: NSPoint(x: 512, y: 790))
+          crown.line(to: NSPoint(x: 622, y: 880))
+          crown.line(to: NSPoint(x: 686, y: 752))
+          crown.line(to: NSPoint(x: 662, y: 690))
+          crown.line(to: NSPoint(x: 362, y: 690))
+          crown.close()
+          NSColor(calibratedRed: 0.06, green: 0.40, blue: 0.92, alpha: 1).setFill()
+          crown.fill()
+          crown.lineWidth = 24
+          NSColor.white.withAlphaComponent(0.96).setStroke()
+          crown.stroke()
+
+          // Central anonymous-search silhouette.
+          let hood = NSBezierPath()
+          hood.move(to: NSPoint(x: 355, y: 565))
+          hood.curve(to: NSPoint(x: 512, y: 680), controlPoint1: NSPoint(x: 392, y: 650), controlPoint2: NSPoint(x: 455, y: 680))
+          hood.curve(to: NSPoint(x: 669, y: 565), controlPoint1: NSPoint(x: 569, y: 680), controlPoint2: NSPoint(x: 632, y: 650))
+          hood.line(to: NSPoint(x: 620, y: 385))
+          hood.curve(to: NSPoint(x: 512, y: 335), controlPoint1: NSPoint(x: 590, y: 350), controlPoint2: NSPoint(x: 550, y: 335))
+          hood.curve(to: NSPoint(x: 404, y: 385), controlPoint1: NSPoint(x: 474, y: 335), controlPoint2: NSPoint(x: 434, y: 350))
+          hood.close()
+          NSColor(calibratedWhite: 0.02, alpha: 0.98).setFill()
+          hood.fill()
+
+          for x in [430.0, 594.0] {
+              let eye = NSBezierPath(roundedRect: NSRect(x: x, y: 505, width: 66, height: 22), xRadius: 11, yRadius: 11)
+              NSColor(calibratedRed: 0.35, green: 0.88, blue: 1.0, alpha: 1).setFill()
+              eye.fill()
+          }
+
+          image.unlockFocus()
+          guard let tiff = image.tiffRepresentation,
+                let bitmap = NSBitmapImageRep(data: tiff),
+                let png = bitmap.representation(using: .png, properties: [:]) else {
+              fatalError("Could not render app icon")
+          }
+          try png.write(to: URL(fileURLWithPath: "Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png"))
+          SWIFT
+          swift /tmp/make_icon.swift
+          sips -g pixelWidth -g pixelHeight Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+
+      - name: Upload unified source
         uses: actions/upload-artifact@v4
         with:
-          name: ReyScrape-restored-source
+          name: ReyScrape-3.1-unified-source
           path: ReyScrape3/Sources/ReyScrapeApp.swift
           if-no-files-found: error
 
@@ -64,6 +211,15 @@ jobs:
             CODE_SIGN_IDENTITY='' \
             build | tee build.log
 
+      - name: Verify bundle identity and icon
+        working-directory: ReyScrape3
+        run: |
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
+          test -n "$APP_PATH"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")" = "com.rvmendillo.reyscrape"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = "3.1"
+          find "$APP_PATH" -maxdepth 2 -iname '*AppIcon*' -print
+
       - name: Package IPA
         working-directory: ReyScrape3
         run: |
@@ -72,11 +228,11 @@ jobs:
           rm -rf Payload
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          ditto -c -k --sequesterRsrc --keepParent Payload ReyScrape-3.0-unsigned.ipa
+          ditto -c -k --sequesterRsrc --keepParent Payload ReyScrape-3.1-unified-unsigned.ipa
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ReyScrape-3.0-unsigned-ipa
-          path: ReyScrape3/ReyScrape-3.0-unsigned.ipa
+          name: ReyScrape-3.1-unified-unsigned-ipa
+          path: ReyScrape3/ReyScrape-3.1-unified-unsigned.ipa
           if-no-files-found: error
