@@ -221,11 +221,12 @@ struct AskV9View: View {
         Task {
             let result = await assistant.answer(question: effective, records: model.records, attachments: sent, history: Array(model.chatMessages.dropLast(1)), onPartial: { partial in
                 if let index = model.chatMessages.firstIndex(where: { $0.id == placeholder.id }) {
-                    model.chatMessages[index] = ChatMessage(role: .assistant, text: partial, evidence: [])
+                    model.chatMessages[index].text = partial
                 }
             })
             if let index = model.chatMessages.firstIndex(where: { $0.id == placeholder.id }) {
-                model.chatMessages[index] = ChatMessage(role: .assistant, text: result.text, evidence: result.evidence)
+                model.chatMessages[index].text = result.text
+                model.chatMessages[index].evidence = result.evidence
             } else { model.chatMessages.append(ChatMessage(role: .assistant, text: result.text, evidence: result.evidence)) }
         }
     }
