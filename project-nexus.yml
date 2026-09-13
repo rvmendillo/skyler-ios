@@ -53,6 +53,7 @@ targets:
       - NexusApp/V8Multimodal.swift
       - NexusApp/V8UnifiedAI.swift
       - NexusApp/V8FastChat.swift
+      - NexusApp/V8FastChatConformance.swift
       - NexusApp/V8FastFiles.swift
       - NexusApp/V8Root.swift
       - NexusApp/NEXUSApp.swift
