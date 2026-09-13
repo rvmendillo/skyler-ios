@@ -1,0 +1,66 @@
+name: Build ReyScrape 3 IPA
+
+on:
+  push:
+    branches:
+      - reyscrape-v3
+    paths:
+      - 'ReyScrape3/**'
+      - '.github/workflows/reyscrape-v3.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore Swift source
+        working-directory: ReyScrape3
+        run: |
+          mkdir -p Sources
+          base64 -D ReyScrapeApp.swift.gz.b64 | gzip -dc > Sources/ReyScrapeApp.swift
+          test -s Sources/ReyScrapeApp.swift
+
+      - name: Install Tuist
+        run: |
+          brew update
+          brew install tuist
+          tuist version
+
+      - name: Generate project
+        working-directory: ReyScrape3
+        run: tuist generate --no-open
+
+      - name: Build unsigned app
+        working-directory: ReyScrape3
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ReyScrape3.xcodeproj \
+            -scheme ReyScrape3 \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build | tee build.log
+
+      - name: Package IPA
+        working-directory: ReyScrape3
+        run: |
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
+          test -n "$APP_PATH"
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload ReyScrape-3.0-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReyScrape-3.0-unsigned-ipa
+          path: ReyScrape3/ReyScrape-3.0-unsigned.ipa
+          if-no-files-found: error
