@@ -72,7 +72,7 @@ private struct BrandHeader: View {
 
             HStack(spacing: 8) {
                 brandChip("64× Ranges", icon: "square.split.2x2")
-                brandChip("Background", icon: "arrow.down.app")
+                brandChip("Live Engine", icon: "waveform.path.ecg")
                 brandChip("Resume", icon: "play.circle")
             }
         }
@@ -191,7 +191,7 @@ struct DownloadsView: View {
                             .autocorrectionDisabled()
                     }
                     Section {
-                        Text("REYDL probes the server, uses parallel byte ranges when supported, and falls back to a standard background transfer when necessary.")
+                        Text("REYDL starts with its live transfer engine, uses parallel byte ranges when the server advertises range support, and automatically falls back to a direct single stream when necessary.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -278,7 +278,7 @@ private struct DownloadRow: View {
         switch item.state {
         case .queued: return "Queued"
         case .probing: return "Probing server…"
-        case .downloading: return item.mode == .segmented ? "Turbo • \(max(item.segmentCount, 1)) connections" : "Background transfer"
+        case .downloading: return item.mode == .segmented ? "Turbo • \(max(item.segmentCount, 1)) connections" : "Direct transfer • live engine"
         case .paused: return "Paused • resume available"
         case .assembling: return "Joining downloaded segments…"
         case .completed: return "Complete"
@@ -309,12 +309,12 @@ struct SettingsView: View {
             Section {
                 Stepper("Maximum parallel ranges: \(downloads.segmentLimit)", value: $downloads.segmentLimit, in: 2...64, step: 2)
                 LabeledContent("Queue limit", value: "No app-imposed limit")
-                LabeledContent("Background engine", value: "URLSession")
-                LabeledContent("Resume", value: "Range + persisted tasks")
+                LabeledContent("Primary engine", value: "Live URLSession")
+                LabeledContent("Resume", value: "Range + persisted queue")
             } header: {
                 Text("Turbo Engine")
             } footer: {
-                Text("Inspired by desktop and Android download accelerators: REYDL uses parallel HTTP byte ranges when supported, with automatic single-stream fallback. iOS and the server can still limit actual concurrency.")
+                Text("REYDL uses an immediate live transfer engine and parallel HTTP byte ranges when the server supports them. iOS and the server can still limit actual concurrency. Fully suspended apps cannot be guaranteed to keep a live-session transfer running indefinitely.")
             }
             Section("Safari Capture") {
                 Text("Enable REYDL in Settings → Apps → Safari → Extensions and set website access to Allow. Safari interception is best-effort; the in-app browser is the most reliable capture route on iOS.")
