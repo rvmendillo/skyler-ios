@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleDisplayName</key><string>NEXUS</string>
+<key>CFBundleName</key><string>NEXUS</string>
+<key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+<key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+<key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+<key>LSRequiresIPhoneOS</key><true/>
+<key>UILaunchScreen</key><dict/>
+<key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
+<key>NSContactsUsageDescription</key><string>NEXUS uses contacts you authorize to build your private relationship graph on-device.</string>
+<key>NSCalendarsFullAccessUsageDescription</key><string>NEXUS analyzes authorized calendar events locally to understand routines and time allocation.</string>
+<key>NSCalendarsUsageDescription</key><string>NEXUS analyzes authorized calendar events locally to understand routines and time allocation.</string>
+<key>NSRemindersFullAccessUsageDescription</key><string>NEXUS analyzes authorized reminders locally to understand goals and planning patterns.</string>
+<key>NSRemindersUsageDescription</key><string>NEXUS analyzes authorized reminders locally to understand goals and planning patterns.</string>
+<key>NSPhotoLibraryUsageDescription</key><string>NEXUS can analyze metadata from photos you authorize to build a private life timeline.</string>
+<key>NSLocationWhenInUseUsageDescription</key><string>NEXUS can use your location while the app is open to enrich your private timeline.</string>
+<key>NSMotionUsageDescription</key><string>NEXUS can analyze authorized activity patterns on-device.</string>
+<key>NSHealthShareUsageDescription</key><string>NEXUS reads only the Health categories you authorize for private wellbeing insights.</string>
+<key>NSHealthUpdateUsageDescription</key><string>NEXUS does not modify Health data unless you explicitly enable a future write feature.</string>
+<key>NSAppleMusicUsageDescription</key><string>NEXUS can analyze your authorized music-library patterns locally.</string>
+<key>NSFaceIDUsageDescription</key><string>NEXUS can use Face ID to protect your private knowledge vault.</string>
+<key>LSSupportsOpeningDocumentsInPlace</key><true/>
+</dict></plist>
