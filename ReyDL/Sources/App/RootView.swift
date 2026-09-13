@@ -177,11 +177,13 @@ struct SettingsView: View {
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
             }
-            Section("Turbo engine") {
+            Section {
                 Stepper("Maximum parallel ranges: \(downloads.segmentLimit)", value: $downloads.segmentLimit, in: 2...64, step: 2)
                 LabeledContent("Queue limit", value: "No app-imposed limit")
                 LabeledContent("Background engine", value: "URLSession")
                 LabeledContent("Resume", value: "Range + task persistence")
+            } header: {
+                Text("Turbo engine")
             } footer: {
                 Text("REYDL uses 2–64 HTTP byte ranges when the server supports them. iOS and the remote server can still cap real simultaneous connections, so higher is not always faster.")
             }
