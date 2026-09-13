@@ -30,13 +30,15 @@ final class NexusV8FastChatHub: ObservableObject {
     func answer(question rawQuestion: String,
                 records: [KnowledgeRecord],
                 attachments: [NexusV8FileItem],
-                history: [ChatMessage]) async -> NexusV8SharedAnswer {
+                history: [ChatMessage],
+                onPartial: ((String) -> Void)? = nil) async -> NexusV8SharedAnswer {
         let clean = rawQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
         let question = clean.isEmpty ? (attachments.isEmpty ? "What stands out in my data?" : "Analyze these files and tell me what matters.") : clean
         let resolved = resolvedMode(question: question, attachments: attachments)
         let key = cacheKey(question: question, records: records, attachments: attachments, mode: resolved)
         if let cached = answerCache[key] {
             status = "Ready • cached"
+            onPartial?(cached.text)
             return cached
         }
 
@@ -65,19 +67,21 @@ final class NexusV8FastChatHub: ObservableObject {
             let deep = await deepAnswer(question: question,
                                         records: records,
                                         compactContext: compactContext,
-                                        attachmentEvidence: attachment.evidence)
+                                        attachmentEvidence: attachment.evidence,
+                                        onPartial: onPartial)
             remember(deep, for: key)
             status = "Ready"
             return deep
         }
 
         status = "Generating answer…"
-        let primary = await primaryAnswer(question: question, context: compactContext)
+        let primary = await primaryAnswer(question: question, context: compactContext, onPartial: onPartial)
         let fallback = primary.isEmpty ? fallbackAnswer(question: question, context: compactContext) : primary
         var evidence = attachment.evidence
         if !recordContext.isEmpty { evidence.append("Used a small relevant subset of your NEXUS data instead of scanning the full vault") }
         if !historyContext.isEmpty { evidence.append("Used recent chat context") }
         let result = NexusV8SharedAnswer(text: friendlyCleanup(fallback), evidence: unique(evidence, limit: 10))
+        if primary.isEmpty { onPartial?(result.text) }
         remember(result, for: key)
         status = "Ready"
         return result
@@ -98,7 +102,9 @@ final class NexusV8FastChatHub: ObservableObject {
         }
     }
 
-    private func primaryAnswer(question: String, context: String) async -> String {
+    private func primaryAnswer(question: String,
+                               context: String,
+                               onPartial: ((String) -> Void)? = nil) async -> String {
         let portable = NexusPortableModelStore.shared
         let prompt = """
         Answer the user's question using only the relevant context below. Do not describe the retrieval process. If the context is unrelated, answer generally and say when personal data is insufficient.
@@ -111,13 +117,16 @@ final class NexusV8FastChatHub: ObservableObject {
         """
 
         if !portable.activeModelID.isEmpty,
-           let local = await portable.respond(prompt, systemContext: friendlyStyle),
+           let local = await portable.streamRespond(prompt, systemContext: friendlyStyle, onPartial: { partial in
+               onPartial?(self.friendlyCleanup(partial))
+           }),
            !local.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return local
         }
 
         if let system = await NexusIntelligenceEngine.respond(question: prompt, context: friendlyStyle),
            !system.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            onPartial?(friendlyCleanup(system))
             return system
         }
         return ""
@@ -126,7 +135,8 @@ final class NexusV8FastChatHub: ObservableObject {
     private func deepAnswer(question: String,
                             records: [KnowledgeRecord],
                             compactContext: String,
-                            attachmentEvidence: [String]) async -> NexusV8SharedAnswer {
+                            attachmentEvidence: [String],
+                            onPartial: ((String) -> Void)? = nil) async -> NexusV8SharedAnswer {
         let deep = await NexusV7AnswerEngine.answer(question: question, records: records)
         let draft = """
         FAST RETRIEVAL CONTEXT:
@@ -135,11 +145,13 @@ final class NexusV8FastChatHub: ObservableObject {
         DEEP ANALYSIS DRAFT:
         \(String(deep.answer.prefix(9_000)))
         """
-        let final = await primaryAnswer(question: question, context: draft)
+        let final = await primaryAnswer(question: question, context: draft, onPartial: onPartial)
         var evidence = attachmentEvidence + Array(deep.evidence.prefix(8))
         evidence.append("Deep mode used the broader NEXUS analysis pipeline")
         if !deep.disagreements.isEmpty { evidence.append(contentsOf: deep.disagreements.prefix(2).map { "Caveat: \($0)" }) }
-        return NexusV8SharedAnswer(text: friendlyCleanup(final.isEmpty ? deep.answer : final), evidence: unique(evidence, limit: 12))
+        let text = friendlyCleanup(final.isEmpty ? deep.answer : final)
+        if final.isEmpty { onPartial?(text) }
+        return NexusV8SharedAnswer(text: text, evidence: unique(evidence, limit: 12))
     }
 
     private func retrieveRelevantContext(question: String, records: [KnowledgeRecord], deep: Bool) -> String {
@@ -175,7 +187,9 @@ final class NexusV8FastChatHub: ObservableObject {
         }
 
         if ranked.isEmpty {
-            ranked = records.suffix(maxRecords).enumerated().map { (1, $0.offset, $0.element) }
+            ranked = Array(records.suffix(maxRecords)).enumerated().map { index, record in
+                (1, index, record)
+            }
         }
 
         var out = ""
@@ -354,10 +368,10 @@ struct AskV8FastView: View {
                 Image(systemName: "bolt.fill").foregroundStyle(.cyan)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("NEXUS Chat").font(.headline)
-                    Text("Fast retrieval • shared loaded model • files").font(.caption2).foregroundStyle(.secondary)
+                    Text("Fast retrieval • streaming • shared loaded model • files").font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
-                NavigationLink { FilesV8View() } label: { Image(systemName: "folder") }
+                NavigationLink { FilesV8FastView() } label: { Image(systemName: "folder") }
                 NavigationLink { PortableModelsV8View() } label: { Image(systemName: "cpu") }
             }
             .padding(.horizontal)
@@ -377,7 +391,7 @@ struct AskV8FastView: View {
                             HStack {
                                 if message.role == .user { Spacer(minLength: 42) }
                                 VStack(alignment: .leading, spacing: 7) {
-                                    Text(message.text).textSelection(.enabled)
+                                    Text(message.text.isEmpty && message.role == .assistant ? "…" : message.text).textSelection(.enabled)
                                     if let cards = attachmentCards[message.id], !cards.isEmpty {
                                         ForEach(cards) { item in
                                             NavigationLink { NexusV8FileViewer(item: item) } label: {
@@ -475,13 +489,27 @@ struct AskV8FastView: View {
         let userMessage = ChatMessage(role: .user, text: shown, evidence: [])
         model.chatMessages.append(userMessage)
         if !files.isEmpty { attachmentCards[userMessage.id] = files }
+        let history = Array(model.chatMessages.dropLast())
+        let assistantMessage = ChatMessage(role: .assistant, text: "", evidence: [])
+        model.chatMessages.append(assistantMessage)
+        let assistantID = assistantMessage.id
         draft = ""
         attachedIDs.removeAll()
-        let history = Array(model.chatMessages.dropLast())
 
         Task {
-            let result = await hub.answer(question: clean, records: model.records, attachments: files, history: history)
-            model.chatMessages.append(ChatMessage(role: .assistant, text: result.text, evidence: result.evidence))
+            let result = await hub.answer(question: clean,
+                                          records: model.records,
+                                          attachments: files,
+                                          history: history,
+                                          onPartial: { partial in
+                if let index = model.chatMessages.firstIndex(where: { $0.id == assistantID }) {
+                    model.chatMessages[index].text = partial
+                }
+            })
+            if let index = model.chatMessages.firstIndex(where: { $0.id == assistantID }) {
+                model.chatMessages[index].text = result.text
+                model.chatMessages[index].evidence = result.evidence
+            }
         }
     }
 
