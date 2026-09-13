@@ -7,6 +7,9 @@ packages:
   ZIPFoundation:
     url: https://github.com/weichsel/ZIPFoundation.git
     from: 0.9.19
+  NobodyWho:
+    url: https://github.com/nobodywho-ooo/nobodywho-swift.git
+    from: 1.0.0
 settings:
   base:
     SWIFT_VERSION: 5.0
@@ -15,8 +18,8 @@ settings:
     GENERATE_INFOPLIST_FILE: NO
     ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     PRODUCT_NAME: NEXUS
-    MARKETING_VERSION: 1.4.0
-    CURRENT_PROJECT_VERSION: 6
+    MARKETING_VERSION: 1.5.0
+    CURRENT_PROJECT_VERSION: 7
     SUPPORTS_MACCATALYST: NO
     ENABLE_BITCODE: NO
     CODE_SIGN_STYLE: Manual
@@ -40,11 +43,16 @@ targets:
       - NexusApp/V6AIEnsemble.swift
       - NexusApp/V6Connectors.swift
       - NexusApp/V6Experience.swift
+      - NexusApp/V7ConversationTwin.swift
+      - NexusApp/V7LocalLLM.swift
+      - NexusApp/V7Storybook.swift
+      - NexusApp/V7UX.swift
       - NexusApp/NEXUSApp.swift
       - NexusApp/Views.swift
       - NexusApp/Assets.xcassets
     dependencies:
       - package: ZIPFoundation
+      - package: NobodyWho
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rey.nexus
