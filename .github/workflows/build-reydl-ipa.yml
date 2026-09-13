@@ -73,12 +73,12 @@ jobs:
       - name: Probe large-file endpoints
         run: |
           set -euo pipefail
-          curl -fL --range 0-1023 --max-time 30 -A 'REYDL/1.1.1' \
+          curl -fL --range 0-1023 --max-time 30 -A 'REYDL/1.1.2' \
             -o /tmp/reydl-hetzner-probe.bin \
             https://fsn1-speed.hetzner.com/10GB.bin
           test "$(wc -c < /tmp/reydl-hetzner-probe.bin | tr -d ' ')" -ge 1024
 
-          curl -fL --range 0-1023 --max-time 30 -A 'REYDL/1.1.1' \
+          curl -fL --range 0-1023 --max-time 30 -A 'REYDL/1.1.2' \
             -o /tmp/reydl-thinkbroadband-probe.bin \
             http://ipv4.download.thinkbroadband.com/5GB.zip
           test "$(wc -c < /tmp/reydl-thinkbroadband-probe.bin | tr -d ' ')" -ge 1024
@@ -103,7 +103,7 @@ jobs:
             CODE_SIGN_IDENTITY='' \
             build
 
-      - name: Verify live engine extension branding and package IPA
+      - name: Verify persistence thread monitor extension and package IPA
         working-directory: ReyDL
         run: |
           set -euo pipefail
@@ -113,6 +113,9 @@ jobs:
           test -f "$APP_PATH/PlugIns/ReyDLExtension.appex/manifest.json"
           test -f "$APP_PATH/AppIcon60x60@2x.png" || find "$APP_PATH" -iname '*AppIcon*' -print | grep -q .
           grep -q 'liveSession.downloadTask' Sources/App/DownloadManager.swift
+          grep -q 'claimDownloadedFile' Sources/App/DownloadManager.swift
+          grep -q 'segmentProgress(for' Sources/App/DownloadManager.swift
+          grep -q 'ThreadProgressGrid' Sources/App/RootView.swift
           grep -q 'bin' Sources/App/BrowserView.swift
           grep -q 'bin' Sources/Extension/Resources/content.js
           rm -rf Payload REYDL-unsigned.ipa
