@@ -73,6 +73,7 @@ jobs:
       - name: Build unsigned device app
         run: |
           set -o pipefail
+          mkdir -p build
           xcodebuild \
             -project NEXUS.xcodeproj \
             -scheme NEXUS \
