@@ -8,10 +8,10 @@ let project = Project(
             name: "SoftwareLife",
             destinations: [.iPhone, .iPad],
             product: .app,
-            bundleId: "com.rvmendillo.softwarelife",
+            bundleId: "com.rvmendillo.codecapital",
             deploymentTargets: .iOS("27.0"),
             infoPlist: .extendingDefault(with: [
-                "CFBundleDisplayName": "Software Life",
+                "CFBundleDisplayName": "Code Capital",
                 "UILaunchScreen": [:],
                 "UIRequiresFullScreen": false,
                 "UIApplicationSceneManifest": [
