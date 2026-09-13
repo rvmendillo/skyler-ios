@@ -1,0 +1,51 @@
+name: Build ReyStream IPA
+
+on:
+  push:
+    branches:
+      - reystream-build-20260913-1234
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct and verify ReyStream source
+        shell: bash
+        run: |
+          python3 -c "from pathlib import Path; import base64; data=''.join(p.read_text() for p in sorted(Path('.reystream_chunks').glob('part*'))); Path('ReyStream-Xcode-Source.zip').write_bytes(base64.b64decode(data))"
+          echo "0a760351b274644d9b12b70cb8c33e34c0ac61ddedd3570c64d39b0467cdbcdd  ReyStream-Xcode-Source.zip" | shasum -a 256 -c -
+          mkdir -p reystream-src
+          unzip -q ReyStream-Xcode-Source.zip -d reystream-src
+
+      - name: Build unsigned iOS app
+        working-directory: reystream-src
+        run: |
+          xcodebuild \
+            -project ReyStream.xcodeproj \
+            -scheme ReyStream \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package IPA
+        working-directory: reystream-src
+        run: |
+          rm -rf Payload ReyStream-unsigned.ipa
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/ReyStream.app Payload/
+          zip -qry ReyStream-unsigned.ipa Payload
+          unzip -t ReyStream-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReyStream-unsigned-ipa
+          path: reystream-src/ReyStream-unsigned.ipa
+          if-no-files-found: error
