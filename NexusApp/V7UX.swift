@@ -70,7 +70,7 @@ enum NexusImportLedger {
     private static let defaultsKey = "nexus.import.ledger.v1"
 
     static func status(for urls: [URL], target: String) -> (alreadySeen: Bool, fingerprints: [String:String]) {
-        var existing = load()
+        let existing = load()
         var result: [String:String] = [:]
         var allSeen = !urls.isEmpty
         for url in urls {
@@ -109,6 +109,11 @@ enum NexusImportLedger {
         let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         return "fallback:\(values?.fileSize ?? -1):\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)"
     }
+}
+
+private struct NexusImportTarget: Identifiable {
+    let id = UUID()
+    let name: String
 }
 
 private struct NexusV7Picker: UIViewControllerRepresentable {
@@ -198,9 +203,7 @@ struct RootV7View: View {
 
             VStack { OperationBannerV7(); Spacer() }.allowsHitTesting(false)
 
-            if showSplash {
-                NexusSplashV7().transition(.opacity)
-            }
+            if showSplash { NexusSplashV7().transition(.opacity) }
         }
         .task {
             try? await Task.sleep(for: .seconds(1.3))
@@ -223,10 +226,11 @@ struct HomeV7View: View {
 
                 HStack(spacing: 9) {
                     quickMetric("Vault", "\(model.records.count)", "externaldrive.fill")
-                    quickMetric("Chats", "\(model.records.lazy.filter { $0.kind == .message }.prefix(99999).count)", "bubble.left.and.bubble.right.fill")
+                    quickMetric("Build", "v7", "hammer.fill")
                     quickMetric("AI", NexusIntelligenceEngine.appleIntelligenceAvailable ? "Apple+" : "Local", "brain.head.profile")
                 }
 
+                NavigationLink { PersonalityLabV7View() } label: { hero("Personality Lab", "Comprehensive behavioral traits, style axes, self-report comparison, contradictions and uncertainty bands.", "person.crop.circle.badge.checkmark", .purple) }.buttonStyle(.plain)
                 NavigationLink { ConversationTwinV7View() } label: { hero("Conversation Twin", "Chat with a clearly labeled simulation derived from an imported speaker's conversational patterns.", "person.2.wave.2.fill", .orange) }.buttonStyle(.plain)
                 NavigationLink { StorybookV7View() } label: { hero("Animated Storybook", "Cartoon companions, narration, evidence-backed chapters and locally generated background music.", "play.square.stack.fill", .pink) }.buttonStyle(.plain)
                 NavigationLink { PortableModelsV7View() } label: { hero("Portable Local LLMs", "Add GGUF models such as a tiny Qwen model; Metal accelerated and no AI API key.", "cpu.fill", .cyan) }.buttonStyle(.plain)
@@ -268,7 +272,7 @@ struct HomeV7View: View {
 struct ConnectHubV7View: View {
     @EnvironmentObject var model: NexusModel
     @StateObject private var hub = DeviceConnectorHub()
-    @State private var pickerTarget: String?
+    @State private var pickerTarget: NexusImportTarget?
     @State private var folderPicker = false
     @State private var nativeBusy = ""
 
@@ -309,7 +313,7 @@ struct ConnectHubV7View: View {
         }
         .navigationTitle("Connections")
         .sheet(item: $pickerTarget) { target in
-            NexusV7Picker(folder: false) { urls in pickerTarget = nil; importFiles(urls, target: target) }
+            NexusV7Picker(folder: false) { urls in pickerTarget = nil; importFiles(urls, target: target.name) }
         }
         .sheet(isPresented: $folderPicker) {
             NexusV7Picker(folder: true) { urls in folderPicker = false; importFiles(urls, target: "Imported Files") }
@@ -320,7 +324,7 @@ struct ConnectHubV7View: View {
         HStack(spacing: 11) {
             Image(systemName: symbol).foregroundStyle(.cyan).frame(width: 27)
             VStack(alignment: .leading, spacing: 3) { Text(title).font(.headline); Text(detail).font(.caption).foregroundStyle(.secondary) }
-            Spacer(); Button("Import / Update") { pickerTarget = title }.buttonStyle(.borderedProminent)
+            Spacer(); Button("Import / Update") { pickerTarget = NexusImportTarget(name: title) }.buttonStyle(.borderedProminent)
         }.padding(.vertical, 3)
     }
 
@@ -354,7 +358,7 @@ struct ConnectHubV7View: View {
         let center = NexusOperationCenter.shared
         center.begin("Updating \(connector.name)", detail: "Requesting authorized local data…")
         center.update(0.15)
-        hub.connect(connector.id) { records, status in
+        hub.connect(connector.id) { records, _ in
             if records.isEmpty {
                 model.setStatus(id: connector.id, status: "No accessible data / permission not granted")
                 center.finish("No accessible records returned")
@@ -378,6 +382,7 @@ struct ExploreHubV7View: View {
                 NavigationLink { ConversationTwinV7View() } label: { row("Conversation Twin", "Style simulation from imported conversations", "person.2.wave.2.fill", .orange) }
             }
             Section("Reasoning labs") {
+                NavigationLink { PersonalityLabV7View() } label: { row("Personality Lab", "Traits, behavior axes, contradictions, self-voice and confidence bands", "person.crop.circle.badge.checkmark", .purple) }
                 NavigationLink { LifeAnalysisV6View() } label: { row("Life Compass", "Goals, strengths, weaknesses and direction", "location.north.circle.fill", .green) }
                 NavigationLink { StandardizationLabV6View() } label: { row("Universal Patterns", "Patterns standardized across unrelated sources", "point.3.connected.trianglepath.dotted", .cyan) }
                 NavigationLink { AIModelLabV6View() } label: { row("AI Ensemble", "Agreement and disagreement between local engines", "brain.head.profile", .purple) }
@@ -398,8 +403,4 @@ extension View {
     func v7Panel() -> some View {
         self.padding().frame(maxWidth: .infinity, alignment: .leading).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
     }
-}
-
-extension String: @retroactive Identifiable {
-    public var id: String { self }
 }
