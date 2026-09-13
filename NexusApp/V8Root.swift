@@ -14,8 +14,8 @@ struct RootV8View: View {
                     .tabItem { Label("Explore", systemImage: "book.pages.fill") }
                 NavigationStack { KnowledgeGraphV3View() }
                     .tabItem { Label("Graph", systemImage: "network") }
-                NavigationStack { AskV7View() }
-                    .tabItem { Label("Ask", systemImage: "bubble.left.and.text.bubble.right.fill") }
+                NavigationStack { AskV8View() }
+                    .tabItem { Label("Chat", systemImage: "bubble.left.and.text.bubble.right.fill") }
             }
             .tint(.cyan)
             .preferredColorScheme(.dark)
@@ -72,7 +72,7 @@ struct NexusSplashV8: View {
                 Text("NEXUS")
                     .font(.system(size: 40, weight: .black, design: .rounded))
                     .tracking(8)
-                Text("V8 • LOCAL MULTIMODAL INTELLIGENCE")
+                Text("V8 • SHARED MULTIMODAL INTELLIGENCE")
                     .font(.caption.bold())
                     .tracking(1.2)
                     .foregroundStyle(.cyan)
@@ -94,6 +94,7 @@ struct NexusSplashV8: View {
 struct HomeV8View: View {
     @EnvironmentObject var model: NexusModel
     @ObservedObject private var multimodal = NexusMultimodalStore.shared
+    @ObservedObject private var language = NexusPortableModelStore.shared
 
     var body: some View {
         ScrollView {
@@ -110,24 +111,24 @@ struct HomeV8View: View {
                     Text("YOUR PERSONAL MULTIMODAL UNIVERSE")
                         .font(.caption.bold())
                         .foregroundStyle(.cyan)
-                    Text("Text, conversations, files, images and PDFs can now converge inside the same private local-first knowledge system.")
+                    Text("Chat, personal data, files, images, PDFs and tables now use the same shared AI layer instead of isolated model silos.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
 
                 HStack(spacing: 9) {
                     metric("Vault", "\(model.records.count)", "externaldrive.fill")
-                    metric("Build", "V8", "hammer.fill")
-                    metric("Vision", multimodal.activePresetID.isEmpty ? "Ready" : "Loaded", "eye.fill")
+                    metric("Build", "V8.1", "hammer.fill")
+                    metric("AI", language.activeModelID.isEmpty && multimodal.activePresetID.isEmpty ? "Ready" : "Loaded", "brain.head.profile.fill")
                 }
 
-                NavigationLink { MultimodalLabV8View() } label: {
-                    feature("Multimodal Files", "Analyze images, PDFs, text/code and system-renderable files with optional local vision-language models.", "eye.trianglebadge.exclamationmark.fill", .cyan)
+                NavigationLink { FilesV8View() } label: {
+                    feature("Files", "Import and open images, text, PDFs and CSVs, then analyze several formats together with shared AI.", "folder.fill.badge.gearshape", .cyan)
                 }
                 .buttonStyle(.plain)
 
-                NavigationLink { AskV7View() } label: {
-                    feature("Ask NEXUS", "Ask questions across the personal vault with evidence-grounded answers.", "bubble.left.and.text.bubble.right.fill", .mint)
+                NavigationLink { AskV8View() } label: {
+                    feature("NEXUS Chat", "Friendly conversational answers across your vault, with file attachments directly in chat.", "bubble.left.and.text.bubble.right.fill", .mint)
                 }
                 .buttonStyle(.plain)
 
@@ -146,8 +147,8 @@ struct HomeV8View: View {
                 }
                 .buttonStyle(.plain)
 
-                NavigationLink { PortableModelsV7View() } label: {
-                    feature("Portable Local LLMs", "Download and run optional GGUF language models directly on iPhone.", "cpu.fill", .yellow)
+                NavigationLink { PortableModelsV8View() } label: {
+                    feature("Shared AI Models", "Download once and reuse the same optional GGUF language models across Chat and file analysis.", "cpu.fill", .yellow)
                 }
                 .buttonStyle(.plain)
 
@@ -204,9 +205,18 @@ struct HomeV8View: View {
 struct ExploreHubV8View: View {
     var body: some View {
         List {
-            Section("V8 multimodal") {
+            Section("V8 shared AI") {
+                NavigationLink { FilesV8View() } label: {
+                    row("Files + Multimodal AI", "Open images, PDFs, text and CSV; combine formats into one analysis", "folder.fill.badge.gearshape", .cyan)
+                }
+                NavigationLink { AskV8View() } label: {
+                    row("NEXUS Chat", "Friendly answers with file attachments and shared models", "bubble.left.and.text.bubble.right.fill", .mint)
+                }
+                NavigationLink { PortableModelsV8View() } label: {
+                    row("Shared AI Models", "Verified GGUF downloads reused across the app", "cpu.fill", .yellow)
+                }
                 NavigationLink { MultimodalLabV8View() } label: {
-                    row("Multimodal Files", "Local vision for images and rendered pages, PDF text + visuals, text/code extraction and safe fallbacks", "eye.fill", .cyan)
+                    row("Vision Model Manager", "Download and load local vision-language models", "eye.fill", .cyan)
                 }
             }
 
@@ -221,7 +231,6 @@ struct ExploreHubV8View: View {
                 NavigationLink { LifeAnalysisV6View() } label: { row("Life Compass", "Goals, strengths, weaknesses and direction", "location.north.circle.fill", .green) }
                 NavigationLink { StandardizationLabV6View() } label: { row("Universal Patterns", "Patterns standardized across unrelated sources", "point.3.connected.trianglepath.dotted", .cyan) }
                 NavigationLink { AIModelLabV6View() } label: { row("AI Ensemble", "Agreement and disagreement between local engines", "brain.head.profile", .purple) }
-                NavigationLink { PortableModelsV7View() } label: { row("Portable GGUF LLMs", "Optional llama.cpp models on iPhone", "cpu.fill", .yellow) }
                 NavigationLink { DecisionLabV6View() } label: { row("Decision Lab", "Stress-test choices against evidence", "scale.3d", .mint) }
                 NavigationLink { DiscoverV4View() } label: { row("Deep Analysis", "Comprehensive evidence and uncertainty", "scope", .indigo) }
             }
