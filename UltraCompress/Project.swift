@@ -16,18 +16,26 @@ let project = Project(
             deploymentTargets: .iOS("18.0"),
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "UltraCompress",
-                "CFBundleShortVersionString": "5.0",
-                "CFBundleVersion": "5",
+                "CFBundleShortVersionString": "6.0",
+                "CFBundleVersion": "6",
                 "UILaunchScreen": [:],
                 "LSSupportsOpeningDocumentsInPlace": true,
                 "UIFileSharingEnabled": true,
+                "NSDownloadsUbiquitousContents": true,
                 "CFBundleDocumentTypes": [
                     [
-                        "CFBundleTypeName": "IPA / Archive / File",
+                        "CFBundleTypeName": "iOS App Archive",
+                        "CFBundleTypeRole": "Editor",
+                        "LSHandlerRank": "Default",
+                        "LSItemContentTypes": [
+                            "com.apple.itunes.ipa"
+                        ]
+                    ],
+                    [
+                        "CFBundleTypeName": "Compressible File",
                         "CFBundleTypeRole": "Editor",
                         "LSHandlerRank": "Alternate",
                         "LSItemContentTypes": [
-                            "com.rvmendillo.ipa",
                             "public.zip-archive",
                             "public.archive",
                             "public.data",
@@ -37,17 +45,17 @@ let project = Project(
                 ],
                 "UTImportedTypeDeclarations": [
                     [
-                        "UTTypeIdentifier": "com.rvmendillo.ipa",
+                        "UTTypeIdentifier": "com.apple.itunes.ipa",
                         "UTTypeDescription": "iOS App Archive",
-                        "UTTypeConformsTo": ["public.zip-archive", "public.data"],
+                        "UTTypeConformsTo": ["public.data"],
                         "UTTypeTagSpecification": [
                             "public.filename-extension": ["ipa"],
-                            "public.mime-type": "application/octet-stream"
+                            "public.mime-type": ["application/x-ios-app"]
                         ]
                     ]
                 ]
             ]),
-            sources: ["SourcesV5/**"],
+            sources: ["SourcesV6/**"],
             resources: ["Resources/**"],
             dependencies: [
                 .package(product: "PLzmaSDK"),
