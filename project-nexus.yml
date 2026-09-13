@@ -61,6 +61,7 @@ targets:
       - NexusApp/V9Assistant.swift
       - NexusApp/V9Experience.swift
       - NexusApp/V9Platform.swift
+      - NexusApp/V9CompileFixes.swift
       - NexusApp/V9Root.swift
       - NexusApp/NEXUSApp.swift
       - NexusApp/Views.swift
