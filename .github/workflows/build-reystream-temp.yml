@@ -3,7 +3,7 @@ name: Build ReyStream IPA
 on:
   push:
     branches:
-      - reystream-build-20260913-1234
+      - reystream-v1-1-build-20260913
   workflow_dispatch:
 
 jobs:
@@ -12,22 +12,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Reconstruct and verify ReyStream source
+      - name: Reconstruct ReyStream source
         shell: bash
         run: |
           python3 -c "from pathlib import Path; import base64; data=''.join(p.read_text() for p in sorted(Path('.reystream_chunks').glob('part*'))); Path('ReyStream-Xcode-Source.zip').write_bytes(base64.b64decode(data))"
           echo "0a760351b274644d9b12b70cb8c33e34c0ac61ddedd3570c64d39b0467cdbcdd  ReyStream-Xcode-Source.zip" | shasum -a 256 -c -
           mkdir -p reystream-src
           unzip -q ReyStream-Xcode-Source.zip -d reystream-src
-          python3 - <<'PY'
-          import plistlib
-          p = 'reystream-src/ReyStream/Info.plist'
-          with open(p, 'rb') as f:
-              d = plistlib.load(f)
-          d['CFBundleExecutable'] = '$(EXECUTABLE_NAME)'
-          with open(p, 'wb') as f:
-              plistlib.dump(d, f, fmt=plistlib.FMT_XML, sort_keys=False)
-          PY
+          cp .reystream_v11_overlay/ReyStream/Views/YouTubeView.swift reystream-src/ReyStream/Views/YouTubeView.swift
+          cp .reystream_v11_overlay/ReyStream/Views/DownloadsView.swift reystream-src/ReyStream/Views/DownloadsView.swift
+          cp .reystream_v11_overlay/ReyStream/Views/SettingsView.swift reystream-src/ReyStream/Views/SettingsView.swift
+          cp .reystream_v11_overlay/ReyStream/Services/DownloadManager.swift reystream-src/ReyStream/Services/DownloadManager.swift
+          cp .reystream_v11_overlay/ReyStream/Info.plist reystream-src/ReyStream/Info.plist
 
       - name: Build unsigned iOS app
         working-directory: reystream-src
@@ -49,12 +45,13 @@ jobs:
         run: |
           APP="build/Build/Products/Release-iphoneos/ReyStream.app"
           EXEC=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")
-          IDENT=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")
           PLATFORM=$(/usr/libexec/PlistBuddy -c 'Print :DTPlatformName' "$APP/Info.plist")
           echo "Executable: $EXEC"
-          echo "Bundle ID: $IDENT"
+          echo "Version: $VERSION"
           echo "Platform: $PLATFORM"
           test "$EXEC" = "ReyStream"
+          test "$VERSION" = "1.1.0"
           test -x "$APP/$EXEC"
           test "$PLATFORM" = "iphoneos"
           file "$APP/$EXEC" | grep -q 'arm64'
@@ -62,15 +59,15 @@ jobs:
       - name: Package IPA
         working-directory: reystream-src
         run: |
-          rm -rf Payload ReyStream-unsigned-fixed.ipa
+          rm -rf Payload ReyStream-1.1-unsigned.ipa
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/ReyStream.app Payload/
-          zip -qry ReyStream-unsigned-fixed.ipa Payload
-          unzip -t ReyStream-unsigned-fixed.ipa
+          zip -qry ReyStream-1.1-unsigned.ipa Payload
+          unzip -t ReyStream-1.1-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: ReyStream-unsigned-fixed-ipa
-          path: reystream-src/ReyStream-unsigned-fixed.ipa
+          name: ReyStream-1.1-unsigned-ipa
+          path: reystream-src/ReyStream-1.1-unsigned.ipa
           if-no-files-found: error
