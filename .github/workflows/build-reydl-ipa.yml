@@ -44,33 +44,19 @@ jobs:
               raw.append(0)
               for x in range(W):
                   t = (x + y) / (2*(W-1))
-                  r = int(20 + 52*(1-t))
-                  g = int(12 + 24*(1-t))
-                  b = int(52 + 120*(1-t))
-
-                  # soft radial glow behind the mark
-                  d = math.hypot(x-512, y-500)
-                  glow = max(0.0, 1.0 - d/560.0)
-                  r = min(255, int(r + 38*glow))
-                  g = min(255, int(g + 24*glow))
-                  b = min(255, int(b + 45*glow))
-
-                  # geometric R monogram
+                  r = int(20 + 52*(1-t)); g = int(12 + 24*(1-t)); b = int(52 + 120*(1-t))
+                  d = math.hypot(x-512, y-500); glow = max(0.0, 1.0 - d/560.0)
+                  r = min(255, int(r + 38*glow)); g = min(255, int(g + 24*glow)); b = min(255, int(b + 45*glow))
                   mark = False
                   if 250 <= x <= 335 and 220 <= y <= 790: mark = True
                   if 300 <= x <= 545 and 220 <= y <= 300: mark = True
                   if 300 <= x <= 545 and 455 <= y <= 535: mark = True
                   if 485 <= x <= 565 and 270 <= y <= 490: mark = True
-                  # diagonal leg of R
                   if 350 <= y <= 805:
                       cx = 390 + int((y-500)*0.48)
                       if abs(x-cx) <= 43 and y >= 500: mark = True
-
-                  if mark:
-                      r = g = b = 246
-                  if in_poly(x, y, bolt):
-                      r, g, b = 255, 255, 255
-
+                  if mark: r = g = b = 246
+                  if in_poly(x, y, bolt): r, g, b = 255, 255, 255
                   raw.extend((r,g,b))
 
           def chunk(kind, data):
@@ -84,13 +70,18 @@ jobs:
           print(path, len(png))
           PY
 
-      - name: Probe Hetzner binary endpoint
+      - name: Probe large-file endpoints
         run: |
           set -euo pipefail
-          curl -fL --range 0-1023 --max-time 30 \
+          curl -fL --range 0-1023 --max-time 30 -A 'REYDL/1.1.1' \
             -o /tmp/reydl-hetzner-probe.bin \
             https://fsn1-speed.hetzner.com/10GB.bin
           test "$(wc -c < /tmp/reydl-hetzner-probe.bin | tr -d ' ')" -ge 1024
+
+          curl -fL --range 0-1023 --max-time 30 -A 'REYDL/1.1.1' \
+            -o /tmp/reydl-thinkbroadband-probe.bin \
+            http://ipv4.download.thinkbroadband.com/5GB.zip
+          test "$(wc -c < /tmp/reydl-thinkbroadband-probe.bin | tr -d ' ')" -ge 1024
 
       - name: Generate Xcode project
         working-directory: ReyDL
@@ -112,7 +103,7 @@ jobs:
             CODE_SIGN_IDENTITY='' \
             build
 
-      - name: Verify extension branding and package IPA
+      - name: Verify live engine extension branding and package IPA
         working-directory: ReyDL
         run: |
           set -euo pipefail
@@ -121,6 +112,7 @@ jobs:
           test -d "$APP_PATH/PlugIns/ReyDLExtension.appex"
           test -f "$APP_PATH/PlugIns/ReyDLExtension.appex/manifest.json"
           test -f "$APP_PATH/AppIcon60x60@2x.png" || find "$APP_PATH" -iname '*AppIcon*' -print | grep -q .
+          grep -q 'liveSession.downloadTask' Sources/App/DownloadManager.swift
           grep -q 'bin' Sources/App/BrowserView.swift
           grep -q 'bin' Sources/Extension/Resources/content.js
           rm -rf Payload REYDL-unsigned.ipa
