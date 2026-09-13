@@ -20,7 +20,11 @@ jobs:
         working-directory: ReyScrape3
         run: |
           mkdir -p Sources
-          base64 -D ReyScrapeApp.swift.gz.b64 | gzip -dc > Sources/ReyScrapeApp.swift
+          python3 - <<'PY'
+          import base64, gzip, pathlib
+          src = pathlib.Path('ReyScrapeApp.swift.gz.b64').read_text().strip()
+          pathlib.Path('Sources/ReyScrapeApp.swift').write_bytes(gzip.decompress(base64.b64decode(src)))
+          PY
           test -s Sources/ReyScrapeApp.swift
 
       - name: Install Tuist
