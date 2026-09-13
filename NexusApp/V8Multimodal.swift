@@ -131,10 +131,8 @@ final class NexusMultimodalStore: ObservableObject {
             return
         }
         if !isDownloaded(preset) { await download(preset) }
-        guard let install = installs[preset.id], !busy else {
-            if installs[preset.id] == nil { return }
-            return
-        }
+        guard let install = installs[preset.id], !busy else { return }
+
         busy = true
         lastError = ""
         progress = max(progress, 0.05)
@@ -263,7 +261,9 @@ final class NexusMultimodalStore: ObservableObject {
     }
 
     private func analyzePDF(url: URL, question: String, chat: Chat) async throws -> NexusFileAnalysisResult {
-        guard let pdf = PDFDocument(url: url) else { throw NSError(domain: "NEXUS.Multimodal", code: 20, userInfo: [NSLocalizedDescriptionKey: "Could not open PDF."]) }
+        guard let pdf = PDFDocument(url: url) else {
+            throw NSError(domain: "NEXUS.Multimodal", code: 20, userInfo: [NSLocalizedDescriptionKey: "Could not open PDF."])
+        }
         var extracted = ""
         let textPageLimit = min(pdf.pageCount, 24)
         for i in 0..<textPageLimit {
@@ -274,7 +274,7 @@ final class NexusMultimodalStore: ObservableObject {
         }
         extracted = String(extracted.prefix(42_000))
 
-        var parts: [NobodyWhoGenerated.PromptPart] = [
+        var parts: [PromptPart] = [
             Prompt.text("FILE: \(url.lastPathComponent)\nREQUEST: \(question)\nPDF PAGES: \(pdf.pageCount)\nEXTRACTED TEXT (capped):\n\(extracted)\n\nI may also provide up to two rendered page previews. Analyze both text and visuals; state when later pages were not inspected.")
         ]
         var temps: [URL] = []
@@ -319,7 +319,9 @@ final class NexusMultimodalStore: ObservableObject {
         defer { try? handle.close() }
         let data = try handle.read(upToCount: maxBytes) ?? Data()
         let decoded = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) ?? ""
-        if decoded.isEmpty { throw NSError(domain: "NEXUS.Multimodal", code: 21, userInfo: [NSLocalizedDescriptionKey: "No readable text was found in this file."]) }
+        if decoded.isEmpty {
+            throw NSError(domain: "NEXUS.Multimodal", code: 21, userInfo: [NSLocalizedDescriptionKey: "No readable text was found in this file."])
+        }
         return String(decoded.prefix(maxCharacters))
     }
 
@@ -349,7 +351,8 @@ final class NexusMultimodalStore: ObservableObject {
     private static func renderPDFPage(_ page: PDFPage, index: Int, maxPixel: Int) throws -> URL {
         let bounds = page.bounds(for: .mediaBox)
         let ratio = max(bounds.width / max(bounds.height, 1), 0.2)
-        let size: CGSize = ratio >= 1 ? .init(width: maxPixel, height: CGFloat(maxPixel) / ratio) : .init(width: CGFloat(maxPixel) * ratio, height: maxPixel)
+        let px = CGFloat(maxPixel)
+        let size: CGSize = ratio >= 1 ? .init(width: px, height: px / ratio) : .init(width: px * ratio, height: px)
         let image = page.thumbnail(of: size, for: .mediaBox)
         guard let data = image.jpegData(compressionQuality: 0.78) else {
             throw NSError(domain: "NEXUS.Multimodal", code: 24, userInfo: [NSLocalizedDescriptionKey: "Could not render PDF page preview."])
@@ -361,14 +364,17 @@ final class NexusMultimodalStore: ObservableObject {
 
     private static func quickLookPreview(_ url: URL, maxPixel: Int) async throws -> URL {
         let scale = await MainActor.run { UIScreen.main.scale }
+        let px = CGFloat(maxPixel)
         let request = QLThumbnailGenerator.Request(fileAt: url,
-                                                   size: CGSize(width: maxPixel, height: maxPixel),
+                                                   size: CGSize(width: px, height: px),
                                                    scale: min(scale, 2),
                                                    representationTypes: .all)
         let representation: QLThumbnailRepresentation = try await withCheckedThrowingContinuation { continuation in
             QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { rep, error in
                 if let rep { continuation.resume(returning: rep) }
-                else { continuation.resume(throwing: error ?? NSError(domain: "NEXUS.Multimodal", code: 25, userInfo: [NSLocalizedDescriptionKey: "No system preview is available for this file type."])) }
+                else {
+                    continuation.resume(throwing: error ?? NSError(domain: "NEXUS.Multimodal", code: 25, userInfo: [NSLocalizedDescriptionKey: "No system preview is available for this file type."]))
+                }
             }
         }
         guard let data = representation.uiImage.jpegData(compressionQuality: 0.80) else {
@@ -418,8 +424,11 @@ struct MultimodalLabV8View: View {
             Section {
                 Text("True local vision for images and rendered pages, full text extraction for common text/code files, PDF text + page previews, and best-effort iOS visual previews for other formats. Unsupported opaque binaries fall back to metadata instead of fabricated content.")
                     .font(.subheadline).foregroundStyle(.secondary)
-                if store.busy || store.progress > 0 { ProgressView(value: store.progress) { Text(store.status).font(.caption) } }
-                else { Text(store.status).font(.caption).foregroundStyle(.secondary) }
+                if store.busy || store.progress > 0 {
+                    ProgressView(value: store.progress) { Text(store.status).font(.caption) }
+                } else {
+                    Text(store.status).font(.caption).foregroundStyle(.secondary)
+                }
                 if !store.lastError.isEmpty { Text(store.lastError).font(.caption).foregroundStyle(.red) }
             }
 
@@ -432,8 +441,11 @@ struct MultimodalLabV8View: View {
                                 Text("\(preset.approximateDownload) • \(preset.detail)").font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            if store.activePresetID == preset.id { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
-                            else if store.isDownloaded(preset) { Image(systemName: "internaldrive.fill").foregroundStyle(.secondary) }
+                            if store.activePresetID == preset.id {
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                            } else if store.isDownloaded(preset) {
+                                Image(systemName: "internaldrive.fill").foregroundStyle(.secondary)
+                            }
                         }
                         HStack {
                             if !store.isDownloaded(preset) {
