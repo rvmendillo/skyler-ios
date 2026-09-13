@@ -8,6 +8,9 @@ struct SoftwareLifeApp: App {
         WindowGroup {
             GameRootView()
                 .environmentObject(game)
+                .task(id: game.currentPlayerIndex) {
+                    await game.autoplayCurrentTurn()
+                }
         }
     }
 }
