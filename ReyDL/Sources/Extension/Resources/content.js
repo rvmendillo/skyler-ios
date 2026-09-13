@@ -1,5 +1,5 @@
 (() => {
-  const fileLike = /\.(7z|zip|rar|tar|gz|tgz|bz2|xz|dmg|pkg|ipa|apk|exe|msi|pdf|epub|mobi|mp3|m4a|aac|wav|flac|ogg|mp4|m4v|mkv|mov|avi|webm|iso|img|csv|tsv|json|xml|txt|rtf|docx?|xlsx?|pptx?|pages|numbers|key)(?:$|[?#])/i;
+  const fileLike = /\.(7z|zip|rar|tar|gz|tgz|bz2|xz|bin|dmg|pkg|ipa|apk|exe|msi|pdf|epub|mobi|mp3|m4a|aac|wav|flac|ogg|mp4|m4v|mkv|mov|avi|webm|iso|img|csv|tsv|json|xml|txt|rtf|docx?|xlsx?|pptx?|pages|numbers|key)(?:$|[?#])/i;
   const downloadHint = /(?:^|[\/?&=_-])(download|downloads|attachment|attachments|export|file|files|media|document|archive|asset|dl)(?:$|[\/?&=_-])/i;
   const downloadQuery = /[?&](?:download|dl|attachment|export|filename|file)=/i;
 
@@ -37,7 +37,6 @@
     return handoff(url, anchor.getAttribute('download') || '');
   }
 
-  // Capture user-initiated links, including dynamically-created anchors.
   for (const eventName of ['click', 'auxclick']) {
     document.addEventListener(eventName, (event) => {
       const anchor = event.target && event.target.closest ? event.target.closest('a[href], area[href]') : null;
@@ -47,14 +46,12 @@
     }, true);
   }
 
-  // Many sites create an anchor in JavaScript and call .click() to start the download.
   const nativeAnchorClick = HTMLAnchorElement.prototype.click;
   HTMLAnchorElement.prototype.click = function(...args) {
     if (captureAnchor(this)) return;
     return nativeAnchorClick.apply(this, args);
   };
 
-  // Catch common programmatic download/navigation patterns that use window.open().
   const nativeOpen = window.open;
   window.open = function(url, target, features) {
     const resolved = typeof url === 'string' ? absoluteURL(url) : null;
@@ -62,12 +59,11 @@
     return nativeOpen.call(window, url, target, features);
   };
 
-  // Catch forms whose action itself is clearly a download/export endpoint.
   document.addEventListener('submit', (event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
     const method = (form.method || 'get').toLowerCase();
-    if (method !== 'get') return; // POST bodies cannot be safely reconstructed by the native app.
+    if (method !== 'get') return;
     const action = absoluteURL(form.action || location.href);
     if (!action || !downloadHint.test(new URL(action).pathname)) return;
     const params = new URLSearchParams(new FormData(form));
