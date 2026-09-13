@@ -87,8 +87,6 @@ struct HomeV6View: View {
     }
 }
 
-// MARK: - Explore
-
 enum ExploreV6Mode: String, CaseIterable, Identifiable { case timeline = "Timeline", storybook = "Storybook", labs = "Labs"; var id: String { rawValue } }
 
 struct ExploreHubV6View: View {
@@ -164,7 +162,7 @@ struct StorybookV6View: View {
                 ScrollView(.horizontal, showsIndicators: false) { HStack { ForEach(JourneyStoryMode.allCases) { item in Button { mode = item; index = 0; narrator.stop() } label: { Label(item.rawValue, systemImage: item.symbol).font(.caption.bold()).padding(.horizontal, 10).padding(.vertical, 7) }.buttonStyle(.plain).background(mode == item ? Color.cyan.opacity(0.23) : Color.secondary.opacity(0.10), in: Capsule()) } } }.padding(.horizontal)
                 TabView(selection: $index) {
                     ForEach(Array(pages.enumerated()), id: \.element.id) { i, page in
-                        V6StoryCard(page: page, body: rewrites[page.id] ?? page.body).padding(.horizontal).tag(i)
+                        V6StoryCard(page: page, storyText: rewrites[page.id] ?? page.body).padding(.horizontal).tag(i)
                     }
                 }.tabViewStyle(.page(indexDisplayMode: .always)).frame(height: 480)
                 if pages.indices.contains(index) {
@@ -172,7 +170,7 @@ struct StorybookV6View: View {
                     HStack {
                         Button { narrator.isSpeaking ? narrator.stop() : narrator.speak(rewrites[page.id] ?? page.body) } label: { Label(narrator.isSpeaking ? "Stop" : "Read aloud", systemImage: narrator.isSpeaking ? "stop.fill" : "speaker.wave.2.fill") }.buttonStyle(.borderedProminent)
                         if NexusIntelligenceEngine.appleIntelligenceAvailable {
-                            Button { rewrite(page) } label: { busy ? AnyView(ProgressView().controlSize(.small)) : AnyView(Label("Magic", systemImage: "apple.intelligence")) }.buttonStyle(.bordered).disabled(busy)
+                            Button { rewrite(page) } label: { Group { if busy { ProgressView().controlSize(.small) } else { Label("Magic", systemImage: "apple.intelligence") } } }.buttonStyle(.bordered).disabled(busy)
                         }
                     }
                     DisclosureGroup("Evidence • \(page.evidence.count)") { ForEach(page.evidence, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) } }.font(.caption.bold()).tint(.cyan).padding(.horizontal)
@@ -194,9 +192,8 @@ struct StorybookV6View: View {
 
 struct V6StoryCard: View {
     let page: NexusStoryPage
-    let body: String
+    let storyText: String
     private let palettes: [[Color]] = [[.blue,.cyan],[.purple,.pink],[.orange,.pink],[.green,.teal],[.indigo,.purple],[.mint,.blue]]
-    var bodyView: some View { EmptyView() }
     var body: some View {
         let colors = palettes[abs(page.accentIndex) % palettes.count]
         ZStack {
@@ -207,7 +204,7 @@ struct V6StoryCard: View {
                 Spacer()
                 Text(page.subtitle.uppercased()).font(.caption.bold()).tracking(1.2).foregroundStyle(.white.opacity(0.78))
                 Text(page.title).font(.system(size: 30, weight: .black, design: .rounded)).foregroundStyle(.white)
-                ScrollView { Text(body).font(.system(size: 17, weight: .medium, design: .rounded)).foregroundStyle(.white.opacity(0.95)).frame(maxWidth: .infinity, alignment: .leading) }.scrollIndicators(.hidden)
+                ScrollView { Text(storyText).font(.system(size: 17, weight: .medium, design: .rounded)).foregroundStyle(.white.opacity(0.95)).frame(maxWidth: .infinity, alignment: .leading) }.scrollIndicators(.hidden)
                 HStack { Label("Evidence-backed", systemImage: "checkmark.shield.fill"); Spacer(); Text("\(page.evidence.count) traces") }.font(.caption.bold()).foregroundStyle(.white.opacity(0.82))
             }.padding(25)
         }.shadow(radius: 13, y: 7)
@@ -226,8 +223,6 @@ struct ExplorationLabsV6View: View {
     }
     private func lab(_ title: String, _ subtitle: String, _ symbol: String) -> some View { HStack(spacing: 12) { Image(systemName: symbol).foregroundStyle(.cyan).frame(width: 30); VStack(alignment: .leading) { Text(title).font(.headline); Text(subtitle).font(.caption).foregroundStyle(.secondary) } } }
 }
-
-// MARK: - Life Compass
 
 struct LifeAnalysisV6View: View {
     @EnvironmentObject var model: NexusModel
@@ -286,8 +281,6 @@ struct LifeAnalysisV6View: View {
     }
 }
 
-// MARK: - Standardization lab
-
 struct StandardizationLabV6View: View {
     @EnvironmentObject var model: NexusModel
     var body: some View {
@@ -312,8 +305,6 @@ struct StandardizationLabV6View: View {
     }
     private func stat(_ label: String, _ value: Int) -> some View { VStack { Text("\(value)").font(.headline); Text(label).font(.caption2).foregroundStyle(.secondary) }.frame(maxWidth: .infinity).padding().background(.thinMaterial, in: RoundedRectangle(cornerRadius: 17)) }
 }
-
-// MARK: - Model lab
 
 struct AIModelLabV6View: View {
     @EnvironmentObject var model: NexusModel
@@ -356,8 +347,6 @@ struct AIModelLabV6View: View {
     private func modelRow(_ title: String, _ subtitle: String, _ symbol: String) -> some View { HStack { Image(systemName: symbol).foregroundStyle(.cyan).frame(width: 28); VStack(alignment: .leading) { Text(title).font(.headline); Text(subtitle).font(.caption).foregroundStyle(.secondary) } } }
 }
 
-// MARK: - Decision lab
-
 struct DecisionLabV6View: View {
     @EnvironmentObject var model: NexusModel
     @State private var optionA = ""
@@ -378,8 +367,6 @@ struct DecisionLabV6View: View {
         }.navigationTitle("Decision Lab")
     }
 }
-
-// MARK: - Smooth ensemble chat
 
 struct AskV6View: View {
     @EnvironmentObject var model: NexusModel
