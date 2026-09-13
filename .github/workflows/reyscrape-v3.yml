@@ -32,6 +32,13 @@ jobs:
           print(f'Restored {len(data)} bytes, sha256={actual}')
           PY
 
+      - name: Upload restored source
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReyScrape-restored-source
+          path: ReyScrape3/Sources/ReyScrapeApp.swift
+          if-no-files-found: error
+
       - name: Install Tuist
         run: |
           brew update
