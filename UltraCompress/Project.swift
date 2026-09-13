@@ -5,7 +5,7 @@ let project = Project(
     organizationName: "rvmendillo",
     packages: [
         .remote(url: "https://github.com/OlehKulykov/PLzmaSDK.git", requirement: .branch("master")),
-        .remote(url: "https://github.com/tomasf/Zip.git", requirement: .branch("main"))
+        .remote(url: "https://github.com/weichsel/ZIPFoundation.git", requirement: .branch("development"))
     ],
     targets: [
         .target(
@@ -16,8 +16,8 @@ let project = Project(
             deploymentTargets: .iOS("18.0"),
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "UltraCompress",
-                "CFBundleShortVersionString": "6.0",
-                "CFBundleVersion": "6",
+                "CFBundleShortVersionString": "7.0",
+                "CFBundleVersion": "7",
                 "UILaunchScreen": [:],
                 "LSSupportsOpeningDocumentsInPlace": true,
                 "UIFileSharingEnabled": true,
@@ -27,9 +27,7 @@ let project = Project(
                         "CFBundleTypeName": "iOS App Archive",
                         "CFBundleTypeRole": "Editor",
                         "LSHandlerRank": "Default",
-                        "LSItemContentTypes": [
-                            "com.apple.itunes.ipa"
-                        ]
+                        "LSItemContentTypes": ["com.apple.itunes.ipa"]
                     ],
                     [
                         "CFBundleTypeName": "Compressible File",
@@ -55,11 +53,11 @@ let project = Project(
                     ]
                 ]
             ]),
-            sources: ["SourcesV6/**"],
+            sources: ["SourcesV7/**"],
             resources: ["Resources/**"],
             dependencies: [
                 .package(product: "PLzmaSDK"),
-                .package(product: "Zip")
+                .package(product: "ZIPFoundation")
             ],
             settings: .settings(base: [
                 "SWIFT_VERSION": "6.0",
