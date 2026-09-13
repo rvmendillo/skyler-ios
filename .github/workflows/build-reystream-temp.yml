@@ -19,6 +19,15 @@ jobs:
           echo "0a760351b274644d9b12b70cb8c33e34c0ac61ddedd3570c64d39b0467cdbcdd  ReyStream-Xcode-Source.zip" | shasum -a 256 -c -
           mkdir -p reystream-src
           unzip -q ReyStream-Xcode-Source.zip -d reystream-src
+          python3 - <<'PY'
+          import plistlib
+          p = 'reystream-src/ReyStream/Info.plist'
+          with open(p, 'rb') as f:
+              d = plistlib.load(f)
+          d['CFBundleExecutable'] = '$(EXECUTABLE_NAME)'
+          with open(p, 'wb') as f:
+              plistlib.dump(d, f, fmt=plistlib.FMT_XML, sort_keys=False)
+          PY
 
       - name: Build unsigned iOS app
         working-directory: reystream-src
@@ -34,18 +43,34 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build
 
+      - name: Validate iPhone bundle
+        working-directory: reystream-src
+        shell: bash
+        run: |
+          APP="build/Build/Products/Release-iphoneos/ReyStream.app"
+          EXEC=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")
+          IDENT=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")
+          PLATFORM=$(/usr/libexec/PlistBuddy -c 'Print :DTPlatformName' "$APP/Info.plist")
+          echo "Executable: $EXEC"
+          echo "Bundle ID: $IDENT"
+          echo "Platform: $PLATFORM"
+          test "$EXEC" = "ReyStream"
+          test -x "$APP/$EXEC"
+          test "$PLATFORM" = "iphoneos"
+          file "$APP/$EXEC" | grep -q 'arm64'
+
       - name: Package IPA
         working-directory: reystream-src
         run: |
-          rm -rf Payload ReyStream-unsigned.ipa
+          rm -rf Payload ReyStream-unsigned-fixed.ipa
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/ReyStream.app Payload/
-          zip -qry ReyStream-unsigned.ipa Payload
-          unzip -t ReyStream-unsigned.ipa
+          zip -qry ReyStream-unsigned-fixed.ipa Payload
+          unzip -t ReyStream-unsigned-fixed.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: ReyStream-unsigned-ipa
-          path: reystream-src/ReyStream-unsigned.ipa
+          name: ReyStream-unsigned-fixed-ipa
+          path: reystream-src/ReyStream-unsigned-fixed.ipa
           if-no-files-found: error
