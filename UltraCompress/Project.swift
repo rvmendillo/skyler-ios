@@ -13,9 +13,11 @@ let project = Project(
             destinations: [.iPhone, .iPad],
             product: .app,
             bundleId: "com.rvmendillo.ultracompress",
-            deploymentTargets: .iOS("27.0"),
+            deploymentTargets: .iOS("18.0"),
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "UltraCompress",
+                "CFBundleShortVersionString": "5.0",
+                "CFBundleVersion": "5",
                 "UILaunchScreen": [:],
                 "LSSupportsOpeningDocumentsInPlace": true,
                 "UIFileSharingEnabled": true,
@@ -45,7 +47,7 @@ let project = Project(
                     ]
                 ]
             ]),
-            sources: ["SourcesV3/**"],
+            sources: ["SourcesV5/**"],
             resources: ["Resources/**"],
             dependencies: [
                 .package(product: "PLzmaSDK"),
