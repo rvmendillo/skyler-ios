@@ -12,17 +12,21 @@
 <key>UIUserInterfaceStyle</key><string>Dark</string>
 <key>UILaunchScreen</key><dict><key>UIColorName</key><string>LaunchBackground</string></dict>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
+<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>com.rey.nexus</string><key>CFBundleURLSchemes</key><array><string>nexus</string></array></dict></array>
 <key>NSContactsUsageDescription</key><string>NEXUS uses contacts you authorize to build your private relationship graph on-device.</string>
 <key>NSCalendarsFullAccessUsageDescription</key><string>NEXUS analyzes authorized calendar events locally to understand routines and time allocation.</string>
 <key>NSCalendarsUsageDescription</key><string>NEXUS analyzes authorized calendar events locally to understand routines and time allocation.</string>
 <key>NSRemindersFullAccessUsageDescription</key><string>NEXUS analyzes authorized reminders locally to understand goals and planning patterns.</string>
 <key>NSRemindersUsageDescription</key><string>NEXUS analyzes authorized reminders locally to understand goals and planning patterns.</string>
-<key>NSPhotoLibraryUsageDescription</key><string>NEXUS can analyze metadata from photos you authorize to build a private life timeline.</string>
+<key>NSPhotoLibraryUsageDescription</key><string>NEXUS can import and analyze photos you select for private local intelligence.</string>
+<key>NSCameraUsageDescription</key><string>NEXUS uses the camera only when you choose document or visual capture.</string>
+<key>NSMicrophoneUsageDescription</key><string>NEXUS uses the microphone when you start a voice conversation.</string>
+<key>NSSpeechRecognitionUsageDescription</key><string>NEXUS converts speech you choose to record into text for local AI conversations.</string>
 <key>NSLocationWhenInUseUsageDescription</key><string>NEXUS can use your location while the app is open to enrich your private timeline.</string>
 <key>NSMotionUsageDescription</key><string>NEXUS can analyze authorized activity patterns on-device.</string>
 <key>NSHealthShareUsageDescription</key><string>NEXUS reads only the Health categories you authorize for private wellbeing insights.</string>
 <key>NSHealthUpdateUsageDescription</key><string>NEXUS does not modify Health data unless you explicitly enable a future write feature.</string>
 <key>NSAppleMusicUsageDescription</key><string>NEXUS can analyze your authorized music-library patterns locally.</string>
-<key>NSFaceIDUsageDescription</key><string>NEXUS can use Face ID to protect your private knowledge vault.</string>
+<key>NSFaceIDUsageDescription</key><string>NEXUS can use Face ID or device authentication to protect your private knowledge vault.</string>
 <key>LSSupportsOpeningDocumentsInPlace</key><true/>
 </dict></plist>
