@@ -68,7 +68,7 @@ jobs:
         run: xcodegen generate --spec project-nexus.yml
 
       - name: Resolve packages
-        run: xcodebuild -resolvePackageDependencies -project NEXUS.xcodeproj -scheme NEXUS
+        run: xcodebuild -resolvePackageDependencies -skipMacroValidation -skipPackagePluginValidation -project NEXUS.xcodeproj -scheme NEXUS
 
       - name: Build unsigned device app
         run: |
@@ -81,6 +81,8 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build/NexusDerived \
+            -skipMacroValidation \
+            -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY='' \
