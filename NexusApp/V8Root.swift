@@ -104,7 +104,7 @@ struct HomeV8View: View {
                             .font(.system(size: 42, weight: .black, design: .rounded))
                             .tracking(7)
                         Text("V8")
-                            .font(.headline.black())
+                            .font(.headline.weight(.black))
                             .foregroundStyle(.cyan)
                     }
                     Text("YOUR PERSONAL MULTIMODAL UNIVERSE")
