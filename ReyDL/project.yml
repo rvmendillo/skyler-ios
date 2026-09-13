@@ -48,7 +48,6 @@ targets:
       - path: Sources/Extension
         excludes:
           - Resources
-    resources:
       - path: Sources/Extension/Resources
     info:
       path: Sources/Extension/Info.plist
