@@ -73,7 +73,7 @@ private struct BrandHeader: View {
             HStack(spacing: 8) {
                 brandChip("64× Ranges", icon: "square.split.2x2")
                 brandChip("Live Engine", icon: "waveform.path.ecg")
-                brandChip("Resume", icon: "play.circle")
+                brandChip("206 Probe", icon: "antenna.radiowaves.left.and.right")
             }
         }
         .foregroundStyle(.white)
@@ -191,7 +191,7 @@ struct DownloadsView: View {
                             .autocorrectionDisabled()
                     }
                     Section {
-                        Text("REYDL starts with its live transfer engine, uses parallel byte ranges when the server advertises range support, and automatically falls back to a direct single stream when necessary.")
+                        Text("REYDL first sends a one-byte HTTP Range request. If the server answers 206 Partial Content, the file is split into multiple simultaneous connections and each connection gets its own live progress bar.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -222,7 +222,7 @@ private struct DownloadRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 10)
@@ -241,15 +241,22 @@ private struct DownloadRow: View {
                 Text(percentText).font(.caption.monospacedDigit().weight(.bold))
             }
 
-            ProgressView(value: item.progress)
-                .tint(item.mode == .segmented ? .indigo : .accentColor)
-
-            if !threadProgress.isEmpty && item.state != .completed {
-                ThreadProgressGrid(progress: threadProgress)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("OVERALL")
+                    Spacer()
+                    Text(sizeText)
+                }
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .foregroundStyle(.secondary)
+                ProgressView(value: item.progress)
+                    .tint(item.mode == .segmented ? .indigo : .accentColor)
+                    .scaleEffect(x: 1, y: 1.15, anchor: .center)
             }
 
+            connectionPanel
+
             HStack(spacing: 16) {
-                Text(sizeText).font(.caption2).foregroundStyle(.secondary)
                 Spacer()
                 if item.state == .downloading || item.state == .probing {
                     Button { downloads.pause(item.id) } label: { Image(systemName: "pause.fill") }
@@ -265,11 +272,52 @@ private struct DownloadRow: View {
             }
             .buttonStyle(.borderless)
 
-            if let error = item.errorMessage, item.state == .failed {
-                Text(error).font(.caption2).foregroundStyle(.red).lineLimit(3)
+            if let error = item.errorMessage, !error.isEmpty, item.state != .completed {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(item.state == .failed ? .red : .secondary)
+                    .lineLimit(3)
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 7)
+    }
+
+    @ViewBuilder
+    private var connectionPanel: some View {
+        if item.mode == .segmented && !threadProgress.isEmpty && item.state != .completed {
+            ThreadProgressGrid(progress: threadProgress)
+        } else if item.state == .probing {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("TESTING MULTI-CONNECTION SUPPORT")
+                        .font(.system(size: 9, weight: .black, design: .rounded))
+                    Text("Requesting bytes 0–0 and waiting for HTTP 206")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(10)
+            .background(.indigo.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        } else if item.mode == .single && item.state != .completed {
+            HStack(spacing: 9) {
+                Image(systemName: "1.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("1 STREAM")
+                        .font(.system(size: 10, weight: .black, design: .rounded))
+                    Text("This transfer is not currently using multiple HTTP ranges.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(10)
+            .background(.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
     }
 
     private var icon: String {
@@ -285,8 +333,10 @@ private struct DownloadRow: View {
     private var statusText: String {
         switch item.state {
         case .queued: return "Queued"
-        case .probing: return "Probing server…"
-        case .downloading: return item.mode == .segmented ? "Turbo • \(max(item.segmentCount, 1)) live threads" : "Direct transfer • live engine"
+        case .probing: return "Probing actual HTTP range support…"
+        case .downloading: return item.mode == .segmented
+            ? "Turbo • \(max(item.segmentCount, 1)) simultaneous range connections"
+            : "Direct transfer • live engine"
         case .paused: return "Paused • resume available"
         case .assembling: return "Joining downloaded segments…"
         case .completed: return "Complete • saved in Files/REYDL Downloads"
@@ -294,7 +344,9 @@ private struct DownloadRow: View {
         }
     }
 
-    private var percentText: String { item.totalBytes > 0 ? "\(Int(item.progress * 100))%" : "—" }
+    private var percentText: String {
+        item.totalBytes > 0 ? "\(Int(item.progress * 100))%" : "—"
+    }
 
     private var sizeText: String {
         if item.totalBytes > 0 {
@@ -307,47 +359,54 @@ private struct DownloadRow: View {
 private struct ThreadProgressGrid: View {
     let progress: [Double]
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 4)
+    private let columns = [
+        GridItem(.flexible(), spacing: 8),
+        GridItem(.flexible(), spacing: 8)
+    ]
 
     private var completed: Int {
         progress.filter { $0 >= 0.999 }.count
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Label("THREAD ACTIVITY", systemImage: "square.grid.3x3.fill")
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .foregroundStyle(.secondary)
+                Label("MULTI-CONNECTION PROGRESS", systemImage: "square.grid.3x3.fill")
+                    .font(.system(size: 10, weight: .black, design: .rounded))
+                    .foregroundStyle(.indigo)
                 Spacer()
-                Text("\(completed)/\(progress.count)")
-                    .font(.caption2.monospacedDigit().weight(.bold))
+                Text("\(completed)/\(progress.count) DONE")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
 
-            LazyVGrid(columns: columns, spacing: 6) {
+            LazyVGrid(columns: columns, spacing: 8) {
                 ForEach(Array(progress.enumerated()), id: \.offset) { index, value in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 2) {
-                            Text("T\(index + 1)")
-                            Spacer(minLength: 2)
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Text("THREAD \(String(format: "%02d", index + 1))")
+                            Spacer(minLength: 4)
                             Text("\(Int(value * 100))%")
                         }
-                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundStyle(value >= 0.999 ? .green : .secondary)
 
                         ProgressView(value: value)
                             .tint(value >= 0.999 ? .green : .indigo)
-                            .scaleEffect(x: 1, y: 0.72, anchor: .center)
+                            .scaleEffect(x: 1, y: 1.15, anchor: .center)
                     }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 5)
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 7)
+                    .background(.background.opacity(0.78), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                 }
             }
         }
-        .padding(8)
-        .background(.indigo.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(11)
+        .background(.indigo.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(.indigo.opacity(0.18), lineWidth: 1)
+        }
     }
 }
 
@@ -365,13 +424,13 @@ struct SettingsView: View {
                 Stepper("Maximum parallel ranges: \(downloads.segmentLimit)", value: $downloads.segmentLimit, in: 2...64, step: 2)
                 LabeledContent("Queue limit", value: "No app-imposed limit")
                 LabeledContent("Primary engine", value: "Live URLSession")
+                LabeledContent("Range detection", value: "GET bytes=0–0 / HTTP 206")
                 LabeledContent("Thread monitor", value: "Per-range live progress")
                 LabeledContent("Saved files", value: "Documents/REYDL Downloads")
-                LabeledContent("Resume", value: "Range + persisted queue")
             } header: {
                 Text("Turbo Engine")
             } footer: {
-                Text("REYDL uses an immediate live transfer engine and parallel HTTP byte ranges when the server supports them. Each active range is shown separately in the download row. iOS and the server can still limit actual concurrency.")
+                Text("REYDL now verifies byte-range support with an actual Range GET instead of relying on HEAD metadata. A genuine 206 response activates multiple parallel connections and the per-thread monitor.")
             }
             Section("Safari Capture") {
                 Text("Enable REYDL in Settings → Apps → Safari → Extensions and set website access to Allow. Safari interception is best-effort; the in-app browser is the most reliable capture route on iOS.")
