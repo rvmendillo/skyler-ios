@@ -68,6 +68,33 @@ jobs:
           print('wrote',p,len(png),'bytes')
           PY
 
+      - name: Apply Xcode 26 V9 compile fixes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text()
+              found = text.count(old)
+              if found < count:
+                  raise SystemExit(f"Expected at least {count} match(es) in {path}, found {found}: {old[:80]!r}")
+              p.write_text(text.replace(old, new, count))
+              print(f"patched {path}: {old[:55]}...")
+
+          replace(
+              'NexusApp/V6Standardization.swift',
+              '            let score = min(1, 0.45 * min(1, Double(sources.count) / 4.0) + 0.35 * min(1, log(Double(values.count)+1)/log(80)) + 0.20 * min(1, Double(span)/730))',
+              '''            let sourceBreadthScore = min(1.0, Double(sources.count) / 4.0)\n            let recurrenceScore = min(1.0, log(Double(values.count) + 1.0) / log(80.0))\n            let persistenceScore = min(1.0, Double(span) / 730.0)\n            let score = min(1.0, 0.45 * sourceBreadthScore + 0.35 * recurrenceScore + 0.20 * persistenceScore)'''
+          )
+          replace('NexusApp/V8UnifiedAI.swift', 'private struct NexusV8TextViewer: View {', 'struct NexusV8TextViewer: View {')
+          replace('NexusApp/V8UnifiedAI.swift', 'private struct NexusV8CSVViewer: View {', 'struct NexusV8CSVViewer: View {')
+          replace('NexusApp/V9Platform.swift', '@State private var body=""', '@State private var reportBody=""')
+          replace('NexusApp/V9Platform.swift', 'TextEditor(text:$body)', 'TextEditor(text:$reportBody)')
+          replace('NexusApp/V9Platform.swift', 'body:body,citations:assistant.lastCitations', 'body:reportBody,citations:assistant.lastCitations', count=4)
+          replace('NexusApp/V9Root.swift', '.font(.largeTitle.black())', '.font(.largeTitle.weight(.black))')
+          PY
+
       - name: Generate Xcode project
         run: xcodegen generate --spec project-nexus.yml
 
