@@ -68,7 +68,7 @@ jobs:
           print('wrote',p,len(png),'bytes')
           PY
 
-      - name: Apply Xcode 26 V9 compile fixes and model deletion UI
+      - name: Apply Xcode 26 V9 compile fixes and model management UI
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -109,6 +109,17 @@ jobs:
               'NexusApp/V9Platform.swift',
               'if models.activeModelID != model.id { Button("Remove") { models.removeDownloadedWeights(model); snap=NexusV9StorageEngine.snapshot() } }',
               'Button(role:.destructive) { models.removeDownloadedWeights(model); snap=NexusV9StorageEngine.snapshot() } label: { Label("Delete download", systemImage:"trash") }'
+          )
+
+          replace(
+              'NexusApp/V7LocalLLM.swift',
+              '''    func download(_ model: NexusPortableModel) async {\n        guard model.isPreset, !busy else { return }\n        busy = true''',
+              '''    func download(_ model: NexusPortableModel) async {\n        guard model.isPreset, !busy else { return }\n        if isDownloaded(model) {\n            progress = 1\n            downloadSnapshot = .zero\n            lastError = ""\n            status = "Already downloaded • \\(model.name) • tap Load when needed"\n            return\n        }\n        busy = true'''
+          )
+          replace(
+              'NexusApp/V8Multimodal.swift',
+              '''    func download(_ preset: NexusMultimodalPreset) async {\n        guard !busy else { return }\n        busy = true''',
+              '''    func download(_ preset: NexusMultimodalPreset) async {\n        guard !busy else { return }\n        if isDownloaded(preset) {\n            progress = 1\n            languageDownload = .zero\n            visionDownload = .zero\n            lastError = ""\n            status = "Already downloaded • \\(preset.name) • tap Load when needed"\n            return\n        }\n        busy = true'''
           )
           PY
 
