@@ -5,8 +5,7 @@ on:
     branches:
       - reyscrape-v3
     paths:
-      - 'ReyScrape3/**'
-      - '.github/workflows/reyscrape-v3.yml'
+      - 'ReyScrape3/BUILD_TRIGGER'
   workflow_dispatch:
 
 jobs:
@@ -19,13 +18,18 @@ jobs:
       - name: Restore Swift source
         working-directory: ReyScrape3
         run: |
-          mkdir -p Sources
           python3 - <<'PY'
-          import base64, gzip, pathlib
-          src = pathlib.Path('ReyScrapeApp.swift.gz.b64').read_text().strip()
-          pathlib.Path('Sources/ReyScrapeApp.swift').write_bytes(gzip.decompress(base64.b64decode(src)))
+          import base64, hashlib, pathlib
+          parts = sorted(pathlib.Path('SourceParts').glob('part*.b64'))
+          assert parts, 'No source chunks found'
+          data = b''.join(base64.b64decode(p.read_text().strip()) for p in parts)
+          expected = 'dfe0f48ba12bec64025b3a19874e85b64ff87a73897670f12e1714695a8edb4b'
+          actual = hashlib.sha256(data).hexdigest()
+          assert actual == expected, f'Source checksum mismatch: {actual}'
+          pathlib.Path('Sources').mkdir(exist_ok=True)
+          pathlib.Path('Sources/ReyScrapeApp.swift').write_bytes(data)
+          print(f'Restored {len(data)} bytes, sha256={actual}')
           PY
-          test -s Sources/ReyScrapeApp.swift
 
       - name: Install Tuist
         run: |
