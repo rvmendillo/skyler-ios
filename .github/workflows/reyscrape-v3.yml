@@ -19,11 +19,12 @@ jobs:
         working-directory: ReyScrape3
         run: |
           python3 - <<'PY'
-          import base64, hashlib, pathlib
+          import base64, gzip, hashlib, pathlib
           parts = sorted(pathlib.Path('SourceParts').glob('part*.b64'))
           assert parts, 'No source chunks found'
-          data = b''.join(base64.b64decode(p.read_text().strip()) for p in parts)
-          expected = 'dfe0f48ba12bec64025b3a19874e85b64ff87a73897670f12e1714695a8edb4b'
+          encoded = ''.join(p.read_text().strip() for p in parts)
+          data = gzip.decompress(base64.b64decode(encoded))
+          expected = '560fda537642ed9772584411c42905f4f6518a8a1ca16ad14f9b6d906a0e89e3'
           actual = hashlib.sha256(data).hexdigest()
           assert actual == expected, f'Source checksum mismatch: {actual}'
           pathlib.Path('Sources').mkdir(exist_ok=True)
