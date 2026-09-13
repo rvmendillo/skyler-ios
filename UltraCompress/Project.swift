@@ -21,14 +21,31 @@ let project = Project(
                 "UIFileSharingEnabled": true,
                 "CFBundleDocumentTypes": [
                     [
-                        "CFBundleTypeName": "Compressible File",
+                        "CFBundleTypeName": "IPA / Archive / File",
                         "CFBundleTypeRole": "Editor",
                         "LSHandlerRank": "Alternate",
-                        "LSItemContentTypes": ["public.data", "public.archive", "public.folder"]
+                        "LSItemContentTypes": [
+                            "com.rvmendillo.ipa",
+                            "public.zip-archive",
+                            "public.archive",
+                            "public.data",
+                            "public.content"
+                        ]
+                    ]
+                ],
+                "UTImportedTypeDeclarations": [
+                    [
+                        "UTTypeIdentifier": "com.rvmendillo.ipa",
+                        "UTTypeDescription": "iOS App Archive",
+                        "UTTypeConformsTo": ["public.zip-archive", "public.data"],
+                        "UTTypeTagSpecification": [
+                            "public.filename-extension": ["ipa"],
+                            "public.mime-type": "application/octet-stream"
+                        ]
                     ]
                 ]
             ]),
-            sources: ["Sources/**"],
+            sources: ["SourcesV3/**"],
             resources: ["Resources/**"],
             dependencies: [
                 .package(product: "PLzmaSDK"),
