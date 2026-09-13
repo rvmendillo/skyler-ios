@@ -18,8 +18,8 @@ settings:
     GENERATE_INFOPLIST_FILE: NO
     ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     PRODUCT_NAME: NEXUS
-    MARKETING_VERSION: 1.8.2
-    CURRENT_PROJECT_VERSION: 13
+    MARKETING_VERSION: 2.0.0
+    CURRENT_PROJECT_VERSION: 20
     SUPPORTS_MACCATALYST: NO
     ENABLE_BITCODE: NO
     CODE_SIGN_STYLE: Manual
@@ -56,6 +56,12 @@ targets:
       - NexusApp/V8FastChatConformance.swift
       - NexusApp/V8FastFiles.swift
       - NexusApp/V8Root.swift
+      - NexusApp/V9Core.swift
+      - NexusApp/V9Documents.swift
+      - NexusApp/V9Assistant.swift
+      - NexusApp/V9Experience.swift
+      - NexusApp/V9Platform.swift
+      - NexusApp/V9Root.swift
       - NexusApp/NEXUSApp.swift
       - NexusApp/Views.swift
       - NexusApp/Assets.xcassets
