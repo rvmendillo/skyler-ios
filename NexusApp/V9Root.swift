@@ -13,7 +13,7 @@ struct RootV9View: View {
                 NavigationStack { HomeV9View(showPalette: $palette) }.tabItem { Label("Home", systemImage: "sparkles") }
                 NavigationStack { NexusV9GlobalSearchView() }.tabItem { Label("Search", systemImage: "magnifyingglass") }
                 NavigationStack { NexusV9FilesHubView() }.tabItem { Label("Files", systemImage: "folder.fill") }
-                NavigationStack { NexusV9InsightInboxView() }.tabItem { Label("Insights", systemImage: "lightbulb.max.fill") }
+                NavigationStack { NexusSynthesisView() }.tabItem { Label("Synthesis", systemImage: "point.3.connected.trianglepath.dotted") }
                 NavigationStack { AskV9View() }.tabItem { Label("Chat", systemImage: "bubble.left.and.text.bubble.right.fill") }
             }
             .tint(.cyan)
@@ -22,6 +22,7 @@ struct RootV9View: View {
         }
         .task {
             await intelligence.index(records: model.records, files: NexusV8FileLibrary.shared.files)
+            NexusSynthesisStore.shared.rebuild(from: intelligence)
             if intelligence.performanceMode != .battery { await intelligence.warmBestLocalModel() }
             try? await Task.sleep(for: .seconds(1.15)); withAnimation(.easeOut(duration: 0.3)) { showSplash = false }
         }
@@ -40,7 +41,7 @@ struct NexusSplashV9: View {
                 ZStack { RoundedRectangle(cornerRadius: 32).fill(.ultraThinMaterial).frame(width: 120,height:120); Image(systemName:"brain.head.profile.fill").font(.system(size:50,weight:.bold)).foregroundStyle(.cyan); Image(systemName:"network").foregroundStyle(.white).offset(x:33,y:35) }
                 Text("NEXUS").font(.system(size:42,weight:.black,design:.rounded)).tracking(8)
                 Text("\(NexusBuildInfo.versionLabel) • \(NexusBuildInfo.productSubtitle)").font(.caption.bold()).tracking(1.3).foregroundStyle(.cyan)
-                Text("Memory • files • models • actions • provenance").font(.caption2).foregroundStyle(.secondary)
+                Text("Memory • files • synthesis • models • actions • provenance").font(.caption2).foregroundStyle(.secondary)
             }
         }.onAppear { withAnimation(.easeInOut(duration:1).repeatForever(autoreverses:true)){pulse=true} }
     }
@@ -67,7 +68,8 @@ struct HomeV9View: View {
                     Button { showPalette=true } label: { Image(systemName:"command.circle.fill").font(.largeTitle) }
                 }
                 HStack(spacing:8){metric("Evidence","\(intelligence.chunks.count)","square.stack.3d.up.fill");metric("Files","\(files.files.count)","folder.fill");metric("Insights","\(intelligence.insights.count)","lightbulb.fill");metric("Build",NexusBuildInfo.versionLabel,"hammer.fill")}
-                NavigationLink { AskV9View() } label: { card("Universal AI Memory","Fast streaming chat over compact hybrid retrieval, semantic caching, context tray, projects and evidence citations.","brain.head.profile.fill",.cyan) }.buttonStyle(.plain)
+                NavigationLink { NexusSynthesisView() } label: { card("Whole-Person Synthesis","Connect all indexed evidence into one model of recurring patterns, current chapter, trajectory, cross-domain links, uncertainty and opportunities.","point.3.connected.trianglepath.dotted",.cyan) }.buttonStyle(.plain)
+                NavigationLink { AskV9View() } label: { card("Universal AI Memory","Fast streaming chat over compact hybrid retrieval, semantic caching, context tray, projects and evidence citations.","brain.head.profile.fill",.blue) }.buttonStyle(.plain)
                 NavigationLink { NexusV9GlobalSearchView() } label: { card("Semantic Search","Search files, records and memory using embeddings + keywords + recency + learned reranking.","magnifyingglass.circle.fill",.mint) }.buttonStyle(.plain)
                 NavigationLink { NexusProductivityHubView() } label: { card("Productivity Hub","Pin important files, browse recents, use tags, capture clipboard text, check data health and reach backup/maintenance tools quickly.","bolt.horizontal.circle.fill",.green) }.buttonStyle(.plain)
                 NavigationLink { NexusV9InsightInboxView() } label: { card("Insight Inbox","Deduplicated evolving insights, evidence strength, provenance and change detection.","sparkles.rectangle.stack.fill",.yellow) }.buttonStyle(.plain)
@@ -149,7 +151,7 @@ struct NexusV9MoreView: View {
     var body: some View {
         List {
             Section("Productivity") { NavigationLink("Productivity Hub"){NexusProductivityHubView()};NavigationLink("Organized Library"){NexusOrganizedLibraryView()};NavigationLink("Recent Files"){NexusRecentFilesView()};NavigationLink("Tags"){NexusTagBrowserView()};NavigationLink("Settings & Maintenance"){NexusSettingsHubView()} }
-            Section("Knowledge OS") { NavigationLink("Projects & conversation branches"){NexusV9WorkspacesView()};NavigationLink("Knowledge Graph 2.0"){NexusV9Graph2View()};NavigationLink("Universal Timeline"){NexusV9Timeline2View()};NavigationLink("Personal Change Detection"){NexusV9ChangeDetectionView()};NavigationLink("Dashboards & Mini Apps"){NexusV9DashboardView()} }
+            Section("Knowledge OS") { NavigationLink("Whole-Person Synthesis"){NexusSynthesisView()};NavigationLink("Projects & conversation branches"){NexusV9WorkspacesView()};NavigationLink("Knowledge Graph 2.0"){NexusV9Graph2View()};NavigationLink("Universal Timeline"){NexusV9Timeline2View()};NavigationLink("Personal Change Detection"){NexusV9ChangeDetectionView()};NavigationLink("Dashboards & Mini Apps"){NexusV9DashboardView()} }
             Section("Files & capture") { NavigationLink("Compare / What Changed?"){NexusV9CompareFilesView()};NavigationLink("Watch Folders"){NexusV9WatchFoldersView()};NavigationLink("Camera & Photos"){NexusV9CaptureView()};NavigationLink("Web Research Capture"){NexusV9ResearchView()} }
             Section("Automation & actions") { NavigationLink("Natural-language Automations"){NexusV9AutomationsView()};NavigationLink("Local Agent Actions + Undo"){NexusV9AgentView()};NavigationLink("Plugin Architecture"){NexusV9PluginView()} }
             Section("Multimodal & models") { NavigationLink("Voice Conversation"){NexusV9VoiceView()};NavigationLink("Shared Language Models"){PortableModelsV8View()};NavigationLink("Vision Model Manager"){MultimodalLabV8View()};NavigationLink("Performance & Diagnostics"){NexusV9PerformanceView()} }
@@ -164,6 +166,7 @@ struct NexusV9CommandPaletteView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var query=""
     private var commands:[NexusV9Command] {[
+        .init(title:"Synthesis",subtitle:"Connect all evidence into one whole-person model",symbol:"point.3.connected.trianglepath.dotted",destination:AnyView(NexusSynthesisView())),
         .init(title:"Chat",subtitle:"Ask across local memory",symbol:"bubble.left.fill",destination:AnyView(AskV9View())),
         .init(title:"Search Everything",subtitle:"Hybrid semantic search",symbol:"magnifyingglass",destination:AnyView(NexusV9GlobalSearchView())),
         .init(title:"Productivity Hub",subtitle:"Favorites, recents, tags, backup and maintenance",symbol:"bolt.horizontal.circle.fill",destination:AnyView(NexusProductivityHubView())),
