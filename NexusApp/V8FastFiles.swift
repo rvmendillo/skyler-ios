@@ -50,7 +50,7 @@ struct FilesV8FastView: View {
                     Text(vision.activePresetID.isEmpty ? "Not loaded" : "Loaded")
                         .foregroundStyle(vision.activePresetID.isEmpty ? Color.secondary : Color.green)
                 }
-                NavigationLink("Shared language models") { PortableModelsV8View() }
+                NavigationLink("Shared language models") { SharedModelsV8EnhancedView() }
                 NavigationLink("Vision model manager") { MultimodalLabV8View() }
             }
 
