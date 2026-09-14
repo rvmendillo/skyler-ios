@@ -111,6 +111,7 @@ enum NexusBackupPlusEngine {
         return result
     }
 
+    @MainActor
     private static func remapFileIDs(manifest: NexusV9BackupManifest, library: NexusV8FileLibrary) -> [UUID:UUID] {
         var output: [UUID:UUID] = [:]
         var digestCache: [String:String] = [:]
