@@ -68,7 +68,7 @@ jobs:
           print('wrote',p,len(png),'bytes')
           PY
 
-      - name: Apply Xcode 26 V9 compile fixes and model management UI
+      - name: Apply Xcode 26 V9 compatibility and product UI patches
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -120,6 +120,12 @@ jobs:
               'NexusApp/V8Multimodal.swift',
               '''    func download(_ preset: NexusMultimodalPreset) async {\n        guard !busy else { return }\n        busy = true''',
               '''    func download(_ preset: NexusMultimodalPreset) async {\n        guard !busy else { return }\n        if isDownloaded(preset) {\n            progress = 1\n            languageDownload = .zero\n            visionDownload = .zero\n            lastError = ""\n            status = "Already downloaded • \\(preset.name) • tap Load when needed"\n            return\n        }\n        busy = true'''
+          )
+
+          replace(
+              'NexusApp/V9Root.swift',
+              'NavigationLink("Storage Manager"){NexusV9StorageView()};NavigationLink("Reports & Intelligence Package"){NexusV9ExportView()}',
+              'NavigationLink("Storage Manager"){NexusV9StorageView()};NavigationLink("Backup & Restore"){NexusV9BackupView()};NavigationLink("Reports & Intelligence Package"){NexusV9ExportView()}'
           )
           PY
 
