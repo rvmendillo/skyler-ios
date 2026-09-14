@@ -22,6 +22,9 @@ struct FilesV8FastView: View {
                 Text("Files stay inside NEXUS after import. Open them directly, attach them in Chat, or analyze several formats together with the same fast shared AI used by Chat.")
                     .font(.subheadline).foregroundStyle(.secondary)
                 Button { showImporter = true } label: { Label("Import files", systemImage: "square.and.arrow.down") }
+                NavigationLink { NexusAnalyzedLibraryView() } label: {
+                    Label("Analyzed Library", systemImage: "sparkles.rectangle.stack.fill")
+                }
                 if !importError.isEmpty { Text(importError).font(.caption).foregroundStyle(.red) }
             }
 
@@ -74,6 +77,7 @@ struct FilesV8FastView: View {
                         Button(role: .destructive) {
                             selectedIDs.remove(item.id)
                             library.remove(item)
+                            NexusPreanalysisStore.shared.prune(to: library.files)
                         } label: { Label("Delete", systemImage: "trash") }
                     }
                 }
@@ -117,6 +121,7 @@ struct FilesV8FastView: View {
                 let imported = try library.importURLs(try result.get())
                 selectedIDs.formUnion(imported.map(\.id))
                 importError = ""
+                Task { await NexusPreanalysisStore.shared.analyzePending(library.files) }
             } catch {
                 importError = error.localizedDescription
             }
