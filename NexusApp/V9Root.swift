@@ -88,6 +88,8 @@ struct NexusV9FilesHubView: View {
     @ObservedObject private var metadata=NexusFileMetadataStore.shared
     @State private var importer=false
     @State private var errorText=""
+    @State private var pendingDelete:NexusV8FileItem?
+
     var body: some View {
         List {
             Section {
@@ -112,7 +114,13 @@ struct NexusV9FilesHubView: View {
                             VStack(alignment:.leading){Text(file.name).font(.headline);Text(NexusV8FileSupport.metadata(file)).font(.caption).foregroundStyle(.secondary)}
                         }
                     }
-                }.onDelete { offsets in for i in offsets { if i < library.files.count { let file=library.files[i]; intelligence.forgetSource(file.id.uuidString); library.remove(file) } } }
+                }.onDelete { offsets in
+                    for i in offsets where i < library.files.count {
+                        let file=library.files[i]
+                        if metadata.confirmDestructiveActions { pendingDelete=file }
+                        else { deleteFile(file) }
+                    }
+                }
             }
             Section("File actions") {
                 NavigationLink("Productivity Hub"){NexusProductivityHubView()}
@@ -122,6 +130,18 @@ struct NexusV9FilesHubView: View {
         }.navigationTitle("Files")
         .fileImporter(isPresented:$importer,allowedContentTypes:[.data,.image,.pdf,.plainText,.commaSeparatedText],allowsMultipleSelection:true){result in do{let urls=try result.get();let imported=try library.importURLs(urls);intelligence.runAutomations(for:.fileImport,importedNames:imported.map(\.name));Task{await intelligence.index(records:model.records,files:library.files)}}catch{errorText=error.localizedDescription}}
         .alert("Import failed",isPresented:Binding(get:{!errorText.isEmpty},set:{if !$0{errorText=""}})){Button("OK"){errorText=""}}message:{Text(errorText)}
+        .alert("Delete imported file?",isPresented:Binding(get:{pendingDelete != nil},set:{if !$0{pendingDelete=nil}})){
+            Button("Delete",role:.destructive){if let file=pendingDelete{deleteFile(file)};pendingDelete=nil}
+            Button("Cancel",role:.cancel){pendingDelete=nil}
+        }message:{Text("This removes NEXUS’s local copy and its search evidence. The original source outside NEXUS is not deleted.")}
+    }
+
+    private func deleteFile(_ file:NexusV8FileItem){
+        intelligence.forgetSource(file.id.uuidString)
+        library.remove(file)
+        let valid=Set(library.files.map{$0.id.uuidString})
+        NexusNiceFeaturesStore.shared.favoriteFileIDs=NexusNiceFeaturesStore.shared.favoriteFileIDs.intersection(valid)
+        metadata.prune(validIDs:valid)
     }
 }
 
@@ -133,7 +153,7 @@ struct NexusV9MoreView: View {
             Section("Files & capture") { NavigationLink("Compare / What Changed?"){NexusV9CompareFilesView()};NavigationLink("Watch Folders"){NexusV9WatchFoldersView()};NavigationLink("Camera & Photos"){NexusV9CaptureView()};NavigationLink("Web Research Capture"){NexusV9ResearchView()} }
             Section("Automation & actions") { NavigationLink("Natural-language Automations"){NexusV9AutomationsView()};NavigationLink("Local Agent Actions + Undo"){NexusV9AgentView()};NavigationLink("Plugin Architecture"){NexusV9PluginView()} }
             Section("Multimodal & models") { NavigationLink("Voice Conversation"){NexusV9VoiceView()};NavigationLink("Shared Language Models"){PortableModelsV8View()};NavigationLink("Vision Model Manager"){MultimodalLabV8View()};NavigationLink("Performance & Diagnostics"){NexusV9PerformanceView()} }
-            Section("Privacy & portability") { NavigationLink("Privacy & Security"){NexusV9SecurityView()};NavigationLink("Storage Manager"){NexusV9StorageView()};NavigationLink("Backup & Restore"){NexusV9BackupView()};NavigationLink("Reports & Intelligence Package"){NexusV9ExportView()} }
+            Section("Privacy & portability") { NavigationLink("Privacy & Security"){NexusV9SecurityView()};NavigationLink("Storage Manager"){NexusV9StorageView()};NavigationLink("Backup & Restore"){NexusPortableBackupView()};NavigationLink("Reports & Intelligence Package"){NexusV9ExportView()} }
             Section("Legacy deep labs") { NavigationLink("Personality Lab"){PersonalityLabV7View()};NavigationLink("Living Storybook"){StorybookV7View()};NavigationLink("Conversation Twin"){ConversationTwinV7View()};NavigationLink("Decision Lab"){DecisionLabV6View()} }
         }.navigationTitle("All Systems")
     }
@@ -157,7 +177,7 @@ struct NexusV9CommandPaletteView: View {
         .init(title:"Capture",subtitle:"Camera, photos and documents",symbol:"camera.fill",destination:AnyView(NexusV9CaptureView())),
         .init(title:"Research",subtitle:"Save webpages offline",symbol:"safari.fill",destination:AnyView(NexusV9ResearchView())),
         .init(title:"Voice",subtitle:"Speak to NEXUS",symbol:"mic.fill",destination:AnyView(NexusV9VoiceView())),
-        .init(title:"Backup & Restore",subtitle:"Portable validated NEXUS backup",symbol:"archivebox.fill",destination:AnyView(NexusV9BackupView())),
+        .init(title:"Backup & Restore",subtitle:"Portable validated NEXUS backup",symbol:"archivebox.fill",destination:AnyView(NexusPortableBackupView())),
         .init(title:"Performance",subtitle:"Benchmark and diagnostics",symbol:"gauge.with.dots.needle.67percent",destination:AnyView(NexusV9PerformanceView()))]}
     var body: some View { List { Section { TextField("Type a command",text:$query).textInputAutocapitalization(.never) }; ForEach(filtered) { command in NavigationLink { command.destination } label:{Label{VStack(alignment:.leading){Text(command.title).font(.headline);Text(command.subtitle).font(.caption).foregroundStyle(.secondary)}}icon:{Image(systemName:command.symbol).foregroundStyle(.cyan)}} } }.navigationTitle("Command Palette").toolbar{ToolbarItem(placement:.topBarTrailing){Button("Done"){dismiss()}}} }
     private var filtered:[NexusV9Command] { query.isEmpty ? commands : commands.filter { ($0.title+" "+$0.subtitle).localizedCaseInsensitiveContains(query) } }
