@@ -14,6 +14,7 @@ struct NEXUSApp: App {
                     if intelligence.performanceMode != .battery {
                         await intelligence.warmBestLocalModel()
                     }
+                    await NexusPreanalysisStore.shared.analyzePending(NexusV8FileLibrary.shared.files)
                 }
                 .onOpenURL { url in
                     NexusV9DeepLink.shared.handle(url, model: model)
