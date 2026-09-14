@@ -72,7 +72,7 @@ struct NexusSplashV8: View {
                 Text("NEXUS")
                     .font(.system(size: 40, weight: .black, design: .rounded))
                     .tracking(8)
-                Text("V8.2 • LATENCY-FIRST SHARED AI")
+                Text("\(NexusBuildInfo.versionLabel) • SHARED AI")
                     .font(.caption.bold())
                     .tracking(1.2)
                     .foregroundStyle(.cyan)
@@ -104,21 +104,21 @@ struct HomeV8View: View {
                         Text("NEXUS")
                             .font(.system(size: 42, weight: .black, design: .rounded))
                             .tracking(7)
-                        Text("V8.2")
+                        Text(NexusBuildInfo.versionLabel)
                             .font(.headline.weight(.black))
                             .foregroundStyle(.cyan)
                     }
                     Text("YOUR PERSONAL MULTIMODAL UNIVERSE")
                         .font(.caption.bold())
                         .foregroundStyle(.cyan)
-                    Text("Chat and files now default to compact retrieval and one shared resident model pass, with deeper multi-engine analysis only when you ask for it.")
+                    Text("Chat and files default to compact retrieval and one shared resident model pass, with deeper multi-engine analysis only when you ask for it.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
 
                 HStack(spacing: 9) {
                     metric("Vault", "\(model.records.count)", "externaldrive.fill")
-                    metric("Build", "V8.2", "hammer.fill")
+                    metric("Build", NexusBuildInfo.versionLabel, "hammer.fill")
                     metric("AI", language.activeModelID.isEmpty && multimodal.activePresetID.isEmpty ? "Ready" : "Loaded", "brain.head.profile.fill")
                 }
 
@@ -205,7 +205,7 @@ struct HomeV8View: View {
 struct ExploreHubV8View: View {
     var body: some View {
         List {
-            Section("V8.2 shared AI") {
+            Section("Shared AI") {
                 NavigationLink { FilesV8FastView() } label: {
                     row("Files + Multimodal AI", "View images, PDFs, text and CSV; analyze them with cached extraction and fast shared AI", "folder.fill.badge.gearshape", .cyan)
                 }
@@ -235,7 +235,7 @@ struct ExploreHubV8View: View {
                 NavigationLink { DiscoverV4View() } label: { row("Deep Analysis", "Comprehensive evidence and uncertainty", "scope", .indigo) }
             }
         }
-        .navigationTitle("Explore V8.2")
+        .navigationTitle("Explore")
     }
 
     private func row(_ title: String, _ subtitle: String, _ symbol: String, _ color: Color) -> some View {
