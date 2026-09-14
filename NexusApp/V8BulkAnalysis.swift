@@ -119,13 +119,17 @@ final class NexusPreanalysisStore: ObservableObject {
     }
 
     func analyze(_ item: NexusV8FileItem, force: Bool = true) async {
-        await analyzePending([item], force: force)
+        if force {
+            entries.removeValue(forKey: item.id.uuidString)
+            persist()
+        }
+        await analyzePending(NexusV8FileLibrary.shared.files)
     }
 
     private func fingerprint(_ item: NexusV8FileItem) -> String {
         let values = try? item.url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
         let modified = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
-        let fileSize = values?.fileSize.map(String.init) ?? String(item.size)
+        let fileSize = String(values?.fileSize ?? Int(item.size))
         return "\(item.path)|\(fileSize)|\(modified)"
     }
 
@@ -283,7 +287,7 @@ struct NexusAnalyzedFileDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             if !store.isCurrent(item) {
-                await store.analyze(item)
+                await store.analyze(item, force: false)
             }
         }
     }
