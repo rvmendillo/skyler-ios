@@ -234,6 +234,16 @@ struct ExploreHubV8View: View {
                 NavigationLink { DecisionLabV6View() } label: { row("Decision Lab", "Stress-test choices against evidence", "scale.3d", .mint) }
                 NavigationLink { DiscoverV4View() } label: { row("Deep Analysis", "Comprehensive evidence and uncertainty", "scope", .indigo) }
             }
+
+            Section("Advanced Systems") {
+                NavigationLink { AskV9View() } label: { row("Universal AI Memory", "The newer V9 assistant with hybrid retrieval, citations and projects", "brain.head.profile.fill", .cyan) }
+                NavigationLink { NexusV9GlobalSearchView() } label: { row("Semantic Search", "Search across local records, files and memory", "magnifyingglass.circle.fill", .mint) }
+                NavigationLink { NexusV9FilesHubView() } label: { row("File Intelligence", "New file library, capture, compare and research tools", "folder.badge.gearshape", .blue) }
+                NavigationLink { NexusV9InsightInboxView() } label: { row("Insight Inbox", "Evidence-backed discoveries, provenance and change detection", "lightbulb.max.fill", .yellow) }
+                NavigationLink { NexusProductivityHubView() } label: { row("Productivity Hub", "Pins, recents, tags, data health, backup and maintenance", "bolt.horizontal.circle.fill", .green) }
+                NavigationLink { NexusV9DashboardView() } label: { row("Dashboards & Mini Apps", "Generated trackers, timelines, calculators and comparisons", "rectangle.3.group.fill", .purple) }
+                NavigationLink { NexusV9MoreView() } label: { row("All New Systems", "Automation, agent actions, voice, privacy, storage, exports and platform tools", "square.grid.3x3.fill", .orange) }
+            }
         }
         .navigationTitle("Explore")
     }
