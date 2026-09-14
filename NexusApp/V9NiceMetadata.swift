@@ -74,7 +74,7 @@ struct NexusProductivityHubView: View {
             }
 
             Section("Protect & maintain") {
-                NavigationLink { NexusV9BackupView() } label: { Label("Backup & Restore", systemImage: "arrow.up.arrow.down.circle") }
+                NavigationLink { NexusPortableBackupView() } label: { Label("Backup & Restore", systemImage: "arrow.up.arrow.down.circle") }
                 NavigationLink { NexusDuplicateFilesView() } label: { Label("Find Duplicate Files", systemImage: "doc.on.doc") }
                 NavigationLink { NexusDataHealthView() } label: { Label("Data Health", systemImage: "checkmark.shield") }
                 NavigationLink { NexusSettingsHubView() } label: { Label("Settings & Maintenance", systemImage: "gearshape.fill") }
@@ -320,7 +320,7 @@ struct NexusSettingsHubView: View {
             }
             Section("Safety") {
                 Toggle("Confirm destructive actions", isOn: $metadata.confirmDestructiveActions)
-                NavigationLink { NexusV9BackupView() } label: { Label("Backup & Restore", systemImage: "archivebox") }
+                NavigationLink { NexusPortableBackupView() } label: { Label("Backup & Restore", systemImage: "archivebox") }
                 Text("Restore validates the NEXUS manifest and imported-file checksums before merging data.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Maintenance") {
@@ -331,7 +331,7 @@ struct NexusSettingsHubView: View {
             }
             Section("Privacy") {
                 NavigationLink { NexusV9SecurityView() } label: { Label("Privacy & Security", systemImage: "lock.shield") }
-                Text("Organization metadata such as favorites, recents and tags stays on device.").font(.caption).foregroundStyle(.secondary)
+                Text("Organization metadata such as favorites, recents and tags stays on device and is included only when you explicitly create a NEXUS backup.").font(.caption).foregroundStyle(.secondary)
             }
         }.navigationTitle("Settings")
     }
