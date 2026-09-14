@@ -11,7 +11,7 @@ struct NexusSynthesisDomainScore: Identifiable, Hashable {
     let strength: Double
 }
 
-enum NexusSynthesisClaimKind: String, CaseIterable, Identifiable {
+enum NexusSynthesisClaimKind: String, CaseIterable, Identifiable, Hashable {
     case observed = "Observed"
     case derived = "Derived"
     case inferred = "Inferred"
@@ -284,7 +284,6 @@ struct NexusSynthesisView: View {
     @EnvironmentObject var model: NexusModel
     @ObservedObject private var synthesis = NexusSynthesisStore.shared
     @ObservedObject private var intelligence = NexusV9IntelligenceStore.shared
-    @State private var showEvidence = false
 
     var body: some View {
         ScrollView {
