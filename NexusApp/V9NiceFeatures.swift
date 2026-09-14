@@ -223,7 +223,7 @@ struct NexusDuplicateFilesView: View {
         defer { try? handle.close() }
         var hasher = SHA256()
         while true {
-            guard let data = try? handle.read(upToCount: 1_048_576), let data, !data.isEmpty else { break }
+            guard let data = try? handle.read(upToCount: 1_048_576), !data.isEmpty else { break }
             hasher.update(data: data)
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
