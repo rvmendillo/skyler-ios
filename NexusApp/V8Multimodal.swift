@@ -115,8 +115,11 @@ final class NexusMultimodalStore: ObservableObject {
             text += String(format: " • %.1f MB/s", speed / 1_048_576.0)
             if done < total {
                 let eta = Double(total - done) / speed
-                if eta >= 60 { text += String(format: " • ETA %.0fm %.0fs", floor(eta / 60), eta.truncatingRemainder(dividingBy: 60))) }
-                else { text += String(format: " • ETA %.0fs", max(0, eta)) }
+                if eta >= 60 {
+                    text += String(format: " • ETA %.0fm %.0fs", floor(eta / 60), eta.truncatingRemainder(dividingBy: 60))
+                } else {
+                    text += String(format: " • ETA %.0fs", max(0, eta))
+                }
             }
         }
         let lanes = languageDownload.activeChunks + visionDownload.activeChunks
