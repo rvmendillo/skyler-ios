@@ -74,8 +74,10 @@ final class NexusPreanalysisStore: ObservableObject {
 
         repeat {
             rerunRequested = false
-            prune(to: NexusV8FileLibrary.shared.files)
+            let libraryFiles = NexusV8FileLibrary.shared.files
+            prune(to: libraryFiles)
 
+            if files.isEmpty { files = libraryFiles }
             guard !files.isEmpty else {
                 status = "No imported files yet"
                 progress = 0
@@ -89,7 +91,7 @@ final class NexusPreanalysisStore: ObservableObject {
                 let full = files.filter { isFullyAnalyzed($0) }.count
                 status = full == files.count
                     ? "All \(files.count) imported file\(files.count == 1 ? " is" : "s are") fully analyzed"
-                    : "Baseline analysis ready • install/load vision to upgrade visual files"
+                    : "Baseline analysis ready • install a vision model to upgrade visual media"
                 progress = 1
                 if rerunRequested { files = NexusV8FileLibrary.shared.files }
                 continue
@@ -100,50 +102,39 @@ final class NexusPreanalysisStore: ObservableObject {
             let vision = NexusMultimodalStore.shared
             let question = "Analyze this file comprehensively for the NEXUS analyzed library. Summarize its purpose and content, extract important facts, visible text and structure, identify patterns or anomalies, and clearly separate observation from inference. Mention limitations when the file or preview is incomplete."
 
-            var visionResults: [NexusFileAnalysisResult] = []
+            var visionResults: [UUID:NexusFileAnalysisResult] = [:]
             if residency.hasDownloadedVisionModel() && !vision.busy {
-                status = "Preparing one shared vision pass for \(pending.count) file\(pending.count == 1 ? "" : "s")…"
-                let urls = pending.map(\.url)
+                status = "Preparing multimodal analysis for \(pending.count) file\(pending.count == 1 ? "" : "s")…"
                 if let results = await residency.withVisionRuntime({
-                    await vision.analyzeFiles(urls, question: question)
-                    return vision.results
+                    await self.analyzeVisionSafely(items: pending, vision: vision, question: question)
                 }) {
                     visionResults = results
                 }
             }
 
-            if visionResults.count == pending.count {
-                for (index, pair) in zip(pending.indices, zip(pending, visionResults)) {
-                    let item = pair.0
-                    let result = pair.1
-                    currentFile = item.name
-                    status = "Saving analysis • \(index + 1)/\(pending.count)"
-                    let failed = result.kind == "Error" || result.answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    if failed {
-                        let fallback = await baselineEntry(for: item, question: question)
-                        entries[item.id.uuidString] = fallback
-                    } else {
-                        entries[item.id.uuidString] = NexusPreanalysisEntry(
-                            fileID: item.id.uuidString,
-                            fingerprint: fingerprint(item),
-                            fileName: item.name,
-                            kind: result.kind,
-                            answer: result.answer,
-                            analyzedAt: Date(),
-                            needsVisionUpgrade: false
-                        )
-                    }
-                    persist()
-                    progress = Double(index + 1) / Double(max(1, pending.count))
-                }
-            } else {
-                for (index, item) in pending.enumerated() {
-                    currentFile = item.name
-                    status = "Analyzing \(item.name) • \(index + 1)/\(pending.count)"
+            for (index, item) in pending.enumerated() {
+                currentFile = item.name
+                status = "Saving analysis • \(index + 1)/\(pending.count)"
+
+                if let result = visionResults[item.id],
+                   result.kind != "Error",
+                   !result.answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    entries[item.id.uuidString] = NexusPreanalysisEntry(
+                        fileID: item.id.uuidString,
+                        fingerprint: fingerprint(item),
+                        fileName: item.name,
+                        kind: result.kind,
+                        answer: result.answer,
+                        analyzedAt: Date(),
+                        needsVisionUpgrade: false
+                    )
+                } else {
                     entries[item.id.uuidString] = await baselineEntry(for: item, question: question)
-                    persist()
-                    progress = Double(index + 1) / Double(max(1, pending.count))
                 }
+
+                persist()
+                progress = Double(index + 1) / Double(max(1, pending.count))
+                await Task.yield()
             }
 
             let allFiles = NexusV8FileLibrary.shared.files
@@ -152,14 +143,12 @@ final class NexusPreanalysisStore: ObservableObject {
             if fullCount == allFiles.count {
                 status = "Analyzed library ready • \(fullCount)/\(allFiles.count) files fully analyzed"
             } else if baselineCount == allFiles.count {
-                status = "Library baseline ready • \(fullCount) full vision analyses, \(baselineCount - fullCount) awaiting vision upgrade"
+                status = "Library baseline ready • \(fullCount) full analyses, \(baselineCount - fullCount) awaiting vision upgrade"
             } else {
                 status = "Analyzed \(baselineCount)/\(allFiles.count) imported files"
             }
 
-            if rerunRequested {
-                files = allFiles
-            }
+            if rerunRequested { files = allFiles }
         } while rerunRequested
     }
 
@@ -171,9 +160,59 @@ final class NexusPreanalysisStore: ObservableObject {
         await analyzePending([item], force: force)
     }
 
+    private func analyzeVisionSafely(
+        items: [NexusV8FileItem],
+        vision: NexusMultimodalStore,
+        question: String
+    ) async -> [UUID:NexusFileAnalysisResult] {
+        var output: [UUID:NexusFileAnalysisResult] = [:]
+        output.reserveCapacity(items.count)
+
+        for (index, item) in items.enumerated() {
+            if Task.isCancelled { break }
+            currentFile = item.name
+            status = "Multimodal analysis • \(index + 1)/\(items.count) • \(item.name)"
+            progress = 0.72 * Double(index) / Double(max(1, items.count))
+
+            if NexusMediaTypes.isVideo(item.url) {
+                do {
+                    let contactSheet = try await NexusVideoFrameExtractor.contactSheet(for: item.url)
+                    defer { try? FileManager.default.removeItem(at: contactSheet) }
+                    let videoQuestion = """
+                    These are representative frames sampled across the actual video \(item.name). Analyze what visibly happens across the sampled timeline: scenes, people/objects, activities, locations, text on screen, transitions and recurring patterns. Distinguish direct observation from inference. State clearly that audio and unsampled moments were not inspected.
+                    """
+                    await vision.analyzeFiles([contactSheet], question: videoQuestion)
+                    if let result = vision.results.first {
+                        output[item.id] = NexusFileAnalysisResult(
+                            fileName: item.name,
+                            kind: "Video • representative frame analysis",
+                            answer: result.answer
+                        )
+                    }
+                } catch {
+                    output[item.id] = NexusFileAnalysisResult(fileName: item.name, kind: "Error", answer: error.localizedDescription)
+                }
+            } else {
+                await vision.analyzeFiles([item.url], question: question)
+                if let result = vision.results.first {
+                    output[item.id] = NexusFileAnalysisResult(
+                        fileName: item.name,
+                        kind: result.kind,
+                        answer: result.answer
+                    )
+                }
+            }
+
+            // One file at a time keeps decoded images, PDF page renders and model output bounded.
+            await Task.yield()
+        }
+
+        return output
+    }
+
     private func baselineEntry(for item: NexusV8FileItem, question: String) async -> NexusPreanalysisEntry {
         let ext = item.ext
-        let definitelyVisual = NexusV8FileSupport.imageExtensions.contains(ext)
+        let definitelyVisual = NexusV8FileSupport.imageExtensions.contains(ext) || NexusMediaTypes.isVideo(item.url)
         let mayNeedVision = definitelyVisual || ext == "pdf" || !NexusV8FileSupport.textExtensions.contains(ext)
 
         var extracted = ""
@@ -185,6 +224,12 @@ final class NexusPreanalysisStore: ObservableObject {
             } else if NexusV8FileSupport.textExtensions.contains(ext) {
                 extracted = try NexusV8FileSupport.readableText(item.url, maxBytes: 1_200_000, maxCharacters: 42_000)
                 kind = "Text / structured file • local analysis"
+            } else if NexusMediaTypes.isVideo(item.url) {
+                extracted = NexusV8FileSupport.metadata(item)
+                kind = "Video metadata baseline • frame analysis pending"
+            } else if NexusV8FileSupport.imageExtensions.contains(ext) {
+                extracted = NexusV8FileSupport.metadata(item)
+                kind = "Image metadata baseline • pixel analysis pending"
             } else {
                 extracted = NexusV8FileSupport.metadata(item)
                 kind = "Metadata baseline • vision upgrade pending"
@@ -195,7 +240,8 @@ final class NexusPreanalysisStore: ObservableObject {
 
         var answer = ""
         if definitelyVisual {
-            answer = "This file is safely stored and queued, but full visual understanding needs an installed vision model. NEXUS retained its metadata and will automatically upgrade this entry the next time a downloaded vision model is available.\n\n\(NexusV8FileSupport.metadata(item))"
+            let mediaLabel = NexusMediaTypes.isVideo(item.url) ? "video frames" : "image pixels"
+            answer = "This media file is safely stored and queued. Full visual understanding of the actual \(mediaLabel) needs an installed vision model. NEXUS retained its metadata and will automatically upgrade this entry when a downloaded vision model is available.\n\n\(NexusV8FileSupport.metadata(item))"
         } else {
             let prompt = """
             Analyze the supplied file evidence for the NEXUS analyzed library. Summarize purpose/content, important facts, structure, patterns or anomalies, and uncertainty. Do not invent information that is not present.
@@ -248,7 +294,7 @@ struct NexusAnalyzedLibraryView: View {
     var body: some View {
         List {
             Section {
-                Text("Imported files are analyzed here automatically. NEXUS now uses any installed vision model, analyzes the whole pending batch in one session, caches results, and falls back to safe text/PDF extraction instead of silently doing nothing when vision is unavailable.")
+                Text("Imported files are analyzed here automatically. Photos are analyzed from their pixels. Videos are analyzed from representative frames sampled across the real video. NEXUS processes one file at a time and falls back safely instead of crashing when a heavyweight model is unavailable.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
@@ -281,6 +327,8 @@ struct NexusAnalyzedLibraryView: View {
                     NavigationLink("Install a vision model for full multimodal analysis") { SharedVisionModelsEnhancedView() }
                 }
 
+                NavigationLink("Import actual photos & videos") { NexusMediaImportView() }
+
                 Button {
                     Task { await store.analyzePending(library.files) }
                 } label: {
@@ -301,7 +349,7 @@ struct NexusAnalyzedLibraryView: View {
                     ContentUnavailableView(
                         "No imported files",
                         systemImage: "folder",
-                        description: Text("Import files once from Files. They will appear here automatically; no second picker is required.")
+                        description: Text("Import files, Meta media, or Apple Photos once. They will appear here automatically; no second picker is required.")
                     )
                 }
 
