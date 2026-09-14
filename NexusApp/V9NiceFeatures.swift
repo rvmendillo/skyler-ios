@@ -74,7 +74,7 @@ struct NexusNiceFeaturesView: View {
                 NavigationLink { NexusV9StorageView() } label: { Label("Storage Manager", systemImage: "internaldrive") }
                 NavigationLink { NexusV9PerformanceView() } label: { Label("Performance & Diagnostics", systemImage: "gauge.with.dots.needle.67percent") }
                 NavigationLink { NexusV9SecurityView() } label: { Label("Privacy & Security", systemImage: "lock.shield") }
-                NavigationLink { NexusV9BackupView() } label: { Label("Backup & Restore", systemImage: "arrow.up.arrow.down.circle") }
+                NavigationLink { NexusPortableBackupView() } label: { Label("Backup & Restore", systemImage: "arrow.up.arrow.down.circle") }
             }
 
             Section("Discoverability") {
@@ -251,7 +251,7 @@ struct NexusDataHealthView: View {
             Section("Actions") {
                 Button { Task { await intelligence.index(records: [], files: library.files, force: true) } } label: { Label("Rebuild file index", systemImage: "arrow.clockwise") }
                 Button { cleanFavorites() } label: { Label("Clean stale favorites", systemImage: "sparkles") }.disabled(staleFavorites == 0)
-                NavigationLink { NexusV9BackupView() } label: { Label("Create a backup", systemImage: "archivebox") }
+                NavigationLink { NexusPortableBackupView() } label: { Label("Create a backup", systemImage: "archivebox") }
             }
             Section { Text("A healthy vault has no missing local copies and all current files represented in the search index. Backups provide portability but intentionally exclude downloadable model weights.").font(.caption).foregroundStyle(.secondary) }
         }.navigationTitle("Data Health")
@@ -271,7 +271,7 @@ struct NexusWhatsNewView: View {
     var body: some View {
         List {
             Section("Latest additions") {
-                feature("Portable backup + restore", "Export your records, imported files and portable intelligence state; restore with validation and deduplication.", "arrow.up.arrow.down.circle")
+                feature("Portable backup + restore", "Export records, imported files, organization metadata and portable intelligence state; restore with validation and deduplication.", "arrow.up.arrow.down.circle")
                 feature("Safe model management", "Downloaded language and vision models are detected before download and can be deleted explicitly to reclaim space.", "cpu")
                 feature("Smart Library", "Search, filter, sort, favorite and share local files without leaving NEXUS.", "folder.badge.gearshape")
                 feature("Clipboard Capture", "Turn copied text into a local memory record in one tap.", "doc.on.clipboard")
@@ -279,7 +279,7 @@ struct NexusWhatsNewView: View {
                 feature("Data Health", "Check missing files, indexing coverage and stale favorite references.", "checkmark.shield")
             }
             Section("Useful shortcuts") {
-                Text("• Use Battery Saver before long sessions away from power.\n• Favorite frequently used files in Smart Library.\n• Rebuild the index after large imports if search results feel incomplete.\n• Export a backup before deleting a large source or resetting the app.\n• Delete model downloads you are not actively using; they can be downloaded again later.")
+                Text("• Use Battery Saver before long sessions away from power.\n• Favorite frequently used files in Organized Library.\n• Rebuild the index after large imports if search results feel incomplete.\n• Export a backup before deleting a large source or resetting the app.\n• Delete model downloads you are not actively using; they can be downloaded again later.")
                     .font(.subheadline)
             }
         }.navigationTitle("What's New")
