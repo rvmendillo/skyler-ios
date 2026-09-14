@@ -24,11 +24,14 @@ struct NexusAdvancedHubView: View {
                 NavigationLink { NexusV9ExportView() } label: {
                     row("Export & Intelligence Package", "Export reports and portable intelligence output from your NEXUS data", "square.and.arrow.up.fill", .mint)
                 }
+                NavigationLink { NexusMediaImportView() } label: {
+                    row("Photo & Video Intelligence", "Import actual media from Apple Photos, Meta ZIPs, folders or Files for pixel/frame analysis", "photo.stack.fill", .pink)
+                }
                 NavigationLink { FilesV8FastView() } label: {
                     row("Files", "Import once and keep files inside NEXUS for reuse", "folder.fill", .blue)
                 }
                 NavigationLink { NexusAnalyzedLibraryView() } label: {
-                    row("Analyzed Library", "Cached multimodal analysis for every imported file without selecting each file again", "sparkles.rectangle.stack.fill", .purple)
+                    row("Analyzed Library", "Automatic cached analysis of documents, real photos and sampled video frames", "sparkles.rectangle.stack.fill", .purple)
                 }
             }
 
@@ -79,10 +82,10 @@ struct NexusAdvancedHubView: View {
 
             Section("AI Models & Multimodal") {
                 NavigationLink { SharedModelsV8EnhancedView() } label: {
-                    row("Shared AI Models", "Download, load, cross-check, delete downloads or delete models", "cpu.fill", .yellow)
+                    row("Shared AI Models", "Sticky language-model residency plus download/model deletion controls", "cpu.fill", .yellow)
                 }
-                NavigationLink { MultimodalLabV8View() } label: {
-                    row("Vision Model Manager", "Manage local multimodal models for images, scans and document pages", "eye.fill", .cyan)
+                NavigationLink { SharedVisionModelsEnhancedView() } label: {
+                    row("Shared Vision Models", "Manage vision downloads and use one safe shared runtime for photos, scans and video frames", "eye.fill", .cyan)
                 }
                 NavigationLink { NexusV9VoiceView() } label: {
                     row("Voice Conversation", "Talk with NEXUS using the newer voice experience", "mic.fill", .pink)
@@ -123,18 +126,21 @@ struct NexusAdvancedHubView: View {
 
 struct SharedModelsV8EnhancedView: View {
     @ObservedObject private var store = NexusPortableModelStore.shared
+    @ObservedObject private var residency = NexusModelResidencyCoordinator.shared
     @State private var picker = false
     @State private var deleteTarget: NexusPortableModel?
 
     var body: some View {
         List {
             Section {
-                Text("Shared language models are reused by Chat, Files and NEXUS intelligence. Model storage can now be removed directly from this page.")
+                Text("Shared language models are reused by Chat, Files and NEXUS intelligence. Your explicitly loaded model is remembered and restored after temporary vision/ensemble work whenever memory allows.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Text(store.memorySummary)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                Toggle("Keep preferred model resident", isOn: $residency.keepPreferredLanguageLoaded)
+                Text(residency.residencyStatus).font(.caption2).foregroundStyle(.secondary)
                 if store.busy || store.progress > 0 {
                     ProgressView(value: store.progress) {
                         Text(store.status).font(.caption)
@@ -191,6 +197,7 @@ struct SharedModelsV8EnhancedView: View {
         ) {
             if let target = deleteTarget {
                 Button("Delete model and local file", role: .destructive) {
+                    residency.clearLanguagePreference(if: target.id)
                     store.delete(target)
                     deleteTarget = nil
                 }
@@ -232,7 +239,7 @@ struct SharedModelsV8EnhancedView: View {
                             .disabled(store.busy)
                     }
                     Button(store.activeModelID == model.id ? "Reload" : "Load") {
-                        Task { await store.load(model) }
+                        Task { await residency.loadLanguage(model) }
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(store.busy)
@@ -246,6 +253,7 @@ struct SharedModelsV8EnhancedView: View {
                 HStack {
                     if store.isDownloaded(model) {
                         Button(role: .destructive) {
+                            residency.clearLanguagePreference(if: model.id)
                             store.removeDownloadedWeights(model)
                         } label: {
                             Label("Delete download", systemImage: "internaldrive.badge.minus")
@@ -294,7 +302,7 @@ struct SharedModelsV8EnhancedView: View {
                         .disabled(store.busy)
                 }
                 Button(store.activeModelID == model.id ? "Reload" : "Load") {
-                    Task { await store.load(model) }
+                    Task { await residency.loadLanguage(model) }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(store.busy)
@@ -308,6 +316,7 @@ struct SharedModelsV8EnhancedView: View {
             HStack {
                 if model.isPreset && store.isDownloaded(model) {
                     Button(role: .destructive) {
+                        residency.clearLanguagePreference(if: model.id)
                         store.removeDownloadedWeights(model)
                     } label: {
                         Label("Delete download", systemImage: "internaldrive.badge.minus")
