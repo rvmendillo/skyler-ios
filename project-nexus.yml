@@ -19,7 +19,7 @@ settings:
     ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     PRODUCT_NAME: NEXUS
     MARKETING_VERSION: 2.1.0
-    CURRENT_PROJECT_VERSION: 22
+    CURRENT_PROJECT_VERSION: 23
     SUPPORTS_MACCATALYST: NO
     ENABLE_BITCODE: NO
     CODE_SIGN_STYLE: Manual
@@ -33,6 +33,7 @@ targets:
       - NexusApp/DeviceConnectors.swift
       - NexusApp/Models.swift
       - NexusApp/NexusBuildInfo.swift
+      - NexusApp/NexusBackupPlus.swift
       - NexusApp/V3Features.swift
       - NexusApp/V3Views.swift
       - NexusApp/V4Analysis.swift
