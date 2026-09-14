@@ -147,8 +147,13 @@ struct HomeV8View: View {
                 }
                 .buttonStyle(.plain)
 
-                NavigationLink { PortableModelsV8View() } label: {
-                    feature("Shared AI Models", "Download once and keep one primary model resident for fast reuse across Chat and Files.", "cpu.fill", .yellow)
+                NavigationLink { SharedModelsV8EnhancedView() } label: {
+                    feature("Shared AI Models", "Download, load, cross-check, delete downloads or remove models used across Chat and Files.", "cpu.fill", .yellow)
+                }
+                .buttonStyle(.plain)
+
+                NavigationLink { NexusAdvancedHubView() } label: {
+                    feature("Advanced NEXUS", "Imports, export, backup/restore, semantic search, insights, dashboards, automations, agents and the strongest newer systems.", "square.grid.3x3.fill", .indigo)
                 }
                 .buttonStyle(.plain)
 
@@ -209,11 +214,14 @@ struct ExploreHubV8View: View {
                 NavigationLink { FilesV8FastView() } label: {
                     row("Files + Multimodal AI", "View images, PDFs, text and CSV; analyze them with cached extraction and fast shared AI", "folder.fill.badge.gearshape", .cyan)
                 }
+                NavigationLink { NexusAnalyzedLibraryView() } label: {
+                    row("Analyzed Library", "All imported files with persistent multimodal analysis and automatic refresh", "sparkles.rectangle.stack.fill", .purple)
+                }
                 NavigationLink { AskV8FastView() } label: {
                     row("NEXUS Chat", "Fast answers with compact retrieval, file attachments and optional Deep mode", "bolt.bubble.fill", .mint)
                 }
-                NavigationLink { PortableModelsV8View() } label: {
-                    row("Shared AI Models", "One resident primary model reused across Chat and Files", "cpu.fill", .yellow)
+                NavigationLink { SharedModelsV8EnhancedView() } label: {
+                    row("Shared AI Models", "Manage shared language models, downloads, deletion and cross-checks", "cpu.fill", .yellow)
                 }
                 NavigationLink { MultimodalLabV8View() } label: {
                     row("Vision Model Manager", "Local vision for images and visual PDF/page analysis", "eye.fill", .cyan)
@@ -235,14 +243,10 @@ struct ExploreHubV8View: View {
                 NavigationLink { DiscoverV4View() } label: { row("Deep Analysis", "Comprehensive evidence and uncertainty", "scope", .indigo) }
             }
 
-            Section("Advanced Systems") {
-                NavigationLink { AskV9View() } label: { row("Universal AI Memory", "The newer V9 assistant with hybrid retrieval, citations and projects", "brain.head.profile.fill", .cyan) }
-                NavigationLink { NexusV9GlobalSearchView() } label: { row("Semantic Search", "Search across local records, files and memory", "magnifyingglass.circle.fill", .mint) }
-                NavigationLink { NexusV9FilesHubView() } label: { row("File Intelligence", "New file library, capture, compare and research tools", "folder.badge.gearshape", .blue) }
-                NavigationLink { NexusV9InsightInboxView() } label: { row("Insight Inbox", "Evidence-backed discoveries, provenance and change detection", "lightbulb.max.fill", .yellow) }
-                NavigationLink { NexusProductivityHubView() } label: { row("Productivity Hub", "Pins, recents, tags, data health, backup and maintenance", "bolt.horizontal.circle.fill", .green) }
-                NavigationLink { NexusV9DashboardView() } label: { row("Dashboards & Mini Apps", "Generated trackers, timelines, calculators and comparisons", "rectangle.3.group.fill", .purple) }
-                NavigationLink { NexusV9MoreView() } label: { row("All New Systems", "Automation, agent actions, voice, privacy, storage, exports and platform tools", "square.grid.3x3.fill", .orange) }
+            Section("Advanced") {
+                NavigationLink { NexusAdvancedHubView() } label: {
+                    row("Advanced NEXUS", "Imports, export, backup/restore and the strongest V9 intelligence, automation and system features", "square.grid.3x3.fill", .indigo)
+                }
             }
         }
         .navigationTitle("Explore")
