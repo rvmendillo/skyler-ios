@@ -126,7 +126,7 @@ private struct NexusV7Picker: UIViewControllerRepresentable {
             picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: false)
             picker.allowsMultipleSelection = false
         } else {
-            picker = UIDocumentPickerViewController(forOpeningContentTypes: [.zip, .json, .plainText, .commaSeparatedText, .html, .xml, .data], asCopy: true)
+            picker = UIDocumentPickerViewController(forOpeningContentTypes: [.zip, .json, .plainText, .commaSeparatedText, .html, .xml, .image, .movie, .data], asCopy: true)
             picker.allowsMultipleSelection = true
         }
         picker.shouldShowFileExtensions = true
@@ -279,15 +279,18 @@ struct ConnectHubV7View: View {
     var body: some View {
         List {
             Section {
-                Text("Re-importing is safe: NEXUS verifies the selected file, rescans it for updates, replaces changed records with stable IDs, and skips exact duplicates.")
+                Text("Re-importing is safe: NEXUS verifies the selected file, rescans it for updates, replaces changed records with stable IDs, skips exact duplicates, and can now ingest real photo/video media from Meta exports.")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
 
             Section("Meta + files") {
-                importRow("Instagram", "Original ZIP/JSON export", "camera.circle.fill")
-                importRow("Facebook / Messenger", "Original Meta ZIP/JSON export", "bubble.left.and.bubble.right.fill")
-                importRow("Files / iCloud Drive", "ZIP, JSON, CSV, TXT, HTML, XML", "doc.zipper")
+                importRow("Instagram", "Original ZIP/JSON export + actual photos/videos", "camera.circle.fill")
+                importRow("Facebook / Messenger", "Original Meta ZIP/JSON export + actual photos/videos", "bubble.left.and.bubble.right.fill")
+                importRow("Files / iCloud Drive", "ZIP, JSON, CSV, TXT, HTML, XML, photos and videos", "doc.zipper")
                 Button { folderPicker = true } label: { Label("Import extracted folder", systemImage: "folder.fill") }
+                NavigationLink { NexusMediaImportView() } label: {
+                    Label("Photo & Video Intelligence", systemImage: "photo.stack.fill")
+                }
             }
 
             Section("On-device connectors • update anytime") {
@@ -333,21 +336,36 @@ struct ConnectHubV7View: View {
         let center = NexusOperationCenter.shared
         center.begin("Importing \(target)", detail: "Checking whether this export was imported before…")
         Task {
-            center.update(0.08, "Fingerprinting selected file\(urls.count == 1 ? "" : "s")…")
+            center.update(0.07, "Fingerprinting selected file\(urls.count == 1 ? "" : "s")…")
             let ledger = await Task.detached { NexusImportLedger.status(for: urls, target: target) }.value
-            center.update(0.16, ledger.alreadySeen ? "Already imported • rescanning for updates…" : "New or changed export detected…")
+            center.update(0.14, ledger.alreadySeen ? "Already imported • rescanning for updates…" : "New or changed export detected…")
+
             let result = await NexusImportCoordinator.importURLs(urls, target: target)
-            center.update(0.74, "Comparing \(result.records.count) parsed records with your vault…")
-            if result.records.isEmpty {
-                let message = result.errors.first ?? "No supported records found."
+            var summaryText = ""
+            if !result.records.isEmpty {
+                center.update(0.46, "Comparing \(result.records.count) parsed records with your vault…")
+                let summary = model.mergeV7(result.records, sourceName: target)
+                summaryText = summary.text
+            }
+
+            center.update(0.58, "Scanning the same selection for actual photos and videos…")
+            let mediaReport = await NexusMediaIngestionStore.shared.importMedia(from: urls)
+
+            if result.records.isEmpty && mediaReport.imported == 0 {
+                let message = result.errors.first ?? (mediaReport.detail.isEmpty ? "No supported records or media found." : mediaReport.detail)
                 model.reportImportError(message)
                 center.finish(message)
                 return
             }
-            let summary = model.mergeV7(result.records, sourceName: target)
+
             NexusImportLedger.commit(ledger.fingerprints)
-            center.update(0.92, "Saving deduplicated vault…")
-            let final = (ledger.alreadySeen ? "Verified existing import • " : "Import complete • ") + summary.text
+            center.update(0.94, "Saving vault and analyzed-media queue…")
+            var pieces: [String] = []
+            if !summaryText.isEmpty { pieces.append(summaryText) }
+            if mediaReport.imported > 0 || mediaReport.skipped > 0 || mediaReport.failed > 0 { pieces.append(mediaReport.summary) }
+            let final = (ledger.alreadySeen ? "Verified existing import • " : "Import complete • ") + pieces.joined(separator: " • ")
+            model.importStatus = final
+            model.activityLog.insert(final, at: 0)
             center.finish(final)
             if !result.errors.isEmpty { model.reportImportError(model.importStatus + " Warnings: " + result.errors.joined(separator: " • ")) }
         }
@@ -362,12 +380,26 @@ struct ConnectHubV7View: View {
             if records.isEmpty {
                 model.setStatus(id: connector.id, status: "No accessible data / permission not granted")
                 center.finish("No accessible records returned")
-            } else {
-                center.update(0.72, "Comparing \(records.count) local records with the vault…")
-                let summary = model.mergeV7(records, sourceName: connector.name)
-                model.setStatus(id: connector.id, status: "Connected • \(records.count) records • \(summary.updatedCount) updated")
-                center.finish(summary.text)
+                nativeBusy = ""
+                return
             }
+
+            center.update(0.62, "Comparing \(records.count) local records with the vault…")
+            let summary = model.mergeV7(records, sourceName: connector.name)
+
+            if connector.id == "photos" {
+                center.update(0.72, "Importing actual recent photo/video files for visual analysis…")
+                Task {
+                    let mediaReport = await NexusMediaIngestionStore.shared.importRecentPhotoLibrary(limit: 100)
+                    model.setStatus(id: connector.id, status: "Connected • \(records.count) records • \(mediaReport.imported) media files")
+                    center.finish(summary.text + " • " + mediaReport.summary)
+                    nativeBusy = ""
+                }
+                return
+            }
+
+            model.setStatus(id: connector.id, status: "Connected • \(records.count) records • \(summary.updatedCount) updated")
+            center.finish(summary.text)
             nativeBusy = ""
         }
     }
