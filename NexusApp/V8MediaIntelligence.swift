@@ -70,12 +70,10 @@ final class NexusMediaIngestionStore: ObservableObject {
 
         let total = candidates.count
         for (index, candidate) in candidates.enumerated() {
-            autoreleasepool {
-                status = "Importing media • \(index + 1)/\(total) • \(candidate.name)"
-            }
+            status = "Importing media • \(index + 1)/\(total) • \(candidate.name)"
             progress = Double(index) / Double(max(1, total))
 
-            guard hasStorageHeadroom() else {
+            guard hasStorageHeadroom(extraBytes: candidate.size) else {
                 report.skipped += total - index
                 report.detail = "Stopped before storage became critically low."
                 break
@@ -86,14 +84,15 @@ final class NexusMediaIngestionStore: ObservableObject {
             }
 
             do {
-                let temp = try candidate.materialize()
-                defer { if candidate.removeAfterImport { try? FileManager.default.removeItem(at: temp) } }
                 if alreadyImported(name: candidate.name, size: candidate.size) {
                     report.skipped += 1
                 } else {
+                    let temp = try candidate.materialize()
+                    defer { if candidate.removeAfterImport { cleanupTemporaryMedia(temp) } }
                     let imported = try NexusV8FileLibrary.shared.importURLs([temp])
-                    if imported.isEmpty { report.failed += 1 }
-                    else {
+                    if imported.isEmpty {
+                        report.failed += 1
+                    } else {
                         report.imported += imported.count
                         report.bytesCopied += candidate.size
                     }
@@ -136,7 +135,7 @@ final class NexusMediaIngestionStore: ObservableObject {
         var report = NexusMediaImportReport()
 
         for index in 0..<count {
-            guard hasStorageHeadroom() else {
+            guard hasStorageHeadroom(extraBytes: 0) else {
                 report.skipped += count - index
                 report.detail = "Stopped before storage became critically low."
                 break
@@ -149,20 +148,24 @@ final class NexusMediaIngestionStore: ObservableObject {
             do {
                 if asset.mediaType == .image {
                     let url = try await exportPhotoAsset(asset)
-                    defer { try? FileManager.default.removeItem(at: url) }
+                    defer { cleanupTemporaryMedia(url) }
                     let size = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-                    if size <= maximumSingleMediaBytes && !alreadyImported(name: url.lastPathComponent, size: size) {
+                    if size <= maximumSingleMediaBytes && hasStorageHeadroom(extraBytes: size) && !alreadyImported(name: url.lastPathComponent, size: size) {
                         report.imported += try NexusV8FileLibrary.shared.importURLs([url]).count
                         report.bytesCopied += size
-                    } else { report.skipped += 1 }
+                    } else {
+                        report.skipped += 1
+                    }
                 } else if asset.mediaType == .video {
                     let url = try await exportVideoAsset(asset)
-                    defer { try? FileManager.default.removeItem(at: url) }
+                    defer { cleanupTemporaryMedia(url) }
                     let size = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-                    if size <= maximumSingleMediaBytes && !alreadyImported(name: url.lastPathComponent, size: size) {
+                    if size <= maximumSingleMediaBytes && hasStorageHeadroom(extraBytes: size) && !alreadyImported(name: url.lastPathComponent, size: size) {
                         report.imported += try NexusV8FileLibrary.shared.importURLs([url]).count
                         report.bytesCopied += size
-                    } else { report.skipped += 1 }
+                    } else {
+                        report.skipped += 1
+                    }
                 } else {
                     report.skipped += 1
                 }
@@ -220,7 +223,9 @@ final class NexusMediaIngestionStore: ObservableObject {
             result.append(NexusMediaCandidate(name: name, size: size, removeAfterImport: true) {
                 let freshArchive = try Archive(url: archiveURL, accessMode: .read)
                 guard let freshEntry = freshArchive[path] else { throw NexusMediaError.archiveEntryMissing }
-                let temp = FileManager.default.temporaryDirectory.appendingPathComponent("nexus-media-\(UUID().uuidString)-\(name)")
+                let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("nexus-media-\(UUID().uuidString)", isDirectory: true)
+                try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+                let temp = tempDir.appendingPathComponent(name)
                 try freshArchive.extract(freshEntry, to: temp, bufferSize: 256 * 1024, skipCRC32: false)
                 return temp
             })
@@ -234,9 +239,10 @@ final class NexusMediaIngestionStore: ObservableObject {
             throw NexusMediaError.assetUnavailable
         }
         let ext = URL(fileURLWithPath: resource.originalFilename).pathExtension.isEmpty ? "jpg" : URL(fileURLWithPath: resource.originalFilename).pathExtension
-        let name = "Photos-\(asset.localIdentifier.replacingOccurrences(of: "/", with: "_"))\.\(ext)"
-        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-        try? FileManager.default.removeItem(at: destination)
+        let identifier = asset.localIdentifier.replacingOccurrences(of: "/", with: "_")
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("nexus-photos-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let destination = tempDir.appendingPathComponent("Photos-\(identifier).\(ext)")
         return try await withCheckedThrowingContinuation { continuation in
             let options = PHAssetResourceRequestOptions()
             options.isNetworkAccessAllowed = true
@@ -253,9 +259,10 @@ final class NexusMediaIngestionStore: ObservableObject {
             throw NexusMediaError.assetUnavailable
         }
         let ext = URL(fileURLWithPath: resource.originalFilename).pathExtension.isEmpty ? "mov" : URL(fileURLWithPath: resource.originalFilename).pathExtension
-        let name = "Photos-\(asset.localIdentifier.replacingOccurrences(of: "/", with: "_"))\.\(ext)"
-        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-        try? FileManager.default.removeItem(at: destination)
+        let identifier = asset.localIdentifier.replacingOccurrences(of: "/", with: "_")
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("nexus-photos-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let destination = tempDir.appendingPathComponent("Photos-\(identifier).\(ext)")
         return try await withCheckedThrowingContinuation { continuation in
             let options = PHAssetResourceRequestOptions()
             options.isNetworkAccessAllowed = true
@@ -270,10 +277,20 @@ final class NexusMediaIngestionStore: ObservableObject {
         NexusV8FileLibrary.shared.files.contains { $0.name == name && $0.size == size }
     }
 
-    private func hasStorageHeadroom() -> Bool {
+    private func hasStorageHeadroom(extraBytes: Int64) -> Bool {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let values = try? base.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-        return Int64(values?.volumeAvailableCapacityForImportantUsage ?? Int64.max) > minimumFreeBytes
+        let free = values?.volumeAvailableCapacityForImportantUsage ?? Int64.max
+        let reserve = minimumFreeBytes + max(0, extraBytes)
+        return free > reserve
+    }
+
+    private func cleanupTemporaryMedia(_ url: URL) {
+        try? FileManager.default.removeItem(at: url)
+        let parent = url.deletingLastPathComponent()
+        if parent.path.hasPrefix(FileManager.default.temporaryDirectory.path) {
+            try? FileManager.default.removeItem(at: parent)
+        }
     }
 }
 
@@ -290,25 +307,26 @@ private enum NexusMediaError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .archiveEntryMissing: return "Media entry disappeared from the archive."
-        case .assetUnavailable: return "The Photos asset could not be exported."
+        case .assetUnavailable: return "The media asset could not be exported or decoded."
         }
     }
 }
 
 enum NexusVideoFrameExtractor {
-    static func contactSheet(for url: URL, maxFrames: Int = 6, maxPixel: CGFloat = 768) async throws -> URL {
+    static func contactSheet(for url: URL, maxFrames: Int = 6, maxPixel: CGFloat = 640) async throws -> URL {
         try await Task.detached(priority: .utility) {
             let asset = AVURLAsset(url: url)
             let duration = try await asset.load(.duration)
             let seconds = max(0.1, CMTimeGetSeconds(duration))
-            let frameCount = max(2, min(maxFrames, Int(ceil(seconds / 5.0))))
+            let frameCount = max(2, min(maxFrames, Int(ceil(seconds / 6.0))))
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
             generator.maximumSize = CGSize(width: maxPixel, height: maxPixel)
-            generator.requestedTimeToleranceBefore = CMTime(seconds: 0.35, preferredTimescale: 600)
-            generator.requestedTimeToleranceAfter = CMTime(seconds: 0.35, preferredTimescale: 600)
+            generator.requestedTimeToleranceBefore = CMTime(seconds: 0.4, preferredTimescale: 600)
+            generator.requestedTimeToleranceAfter = CMTime(seconds: 0.4, preferredTimescale: 600)
 
             var images: [UIImage] = []
+            images.reserveCapacity(frameCount)
             for index in 0..<frameCount {
                 try Task.checkCancellation()
                 let ratio = frameCount == 1 ? 0.5 : Double(index) / Double(frameCount - 1)
@@ -340,7 +358,8 @@ enum NexusVideoFrameExtractor {
                     image.draw(in: fitted)
                 }
             }
-            guard let data = sheet.jpegData(compressionQuality: 0.78) else { throw NexusMediaError.assetUnavailable }
+            images.removeAll(keepingCapacity: false)
+            guard let data = sheet.jpegData(compressionQuality: 0.76) else { throw NexusMediaError.assetUnavailable }
             let output = FileManager.default.temporaryDirectory.appendingPathComponent("nexus-video-frames-\(UUID().uuidString).jpg")
             try data.write(to: output, options: .atomic)
             return output
@@ -379,7 +398,7 @@ struct NexusMediaImportView: View {
                 Button { picker = true } label: {
                     Label("Import photos/videos or Meta ZIP/folder", systemImage: "photo.stack.fill")
                 }
-                Text("For Meta ZIPs, NEXUS streams only image/video entries to local storage; it does not load an entire archive or video into memory.")
+                Text("For Meta ZIPs, NEXUS streams image/video entries to local storage without loading an entire archive or video into RAM.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -393,7 +412,7 @@ struct NexusMediaImportView: View {
                 Button { allPhotosConfirmation = true } label: {
                     Label("Import all accessible photos & videos safely", systemImage: "square.stack.3d.down.right.fill")
                 }
-                Text("‘All’ processes assets sequentially, skips duplicates/oversized media, and stops before free storage becomes critically low.")
+                Text("‘All’ processes assets sequentially, skips duplicates or oversized media, and stops before free storage becomes critically low.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
