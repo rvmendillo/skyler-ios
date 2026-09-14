@@ -11,7 +11,7 @@ final class NexusV9Assistant: ObservableObject {
     @Published var lastContextBudget = ""
 
     private let style = """
-    You are NEXUS, a polished private personal intelligence assistant. Answer like a high-quality consumer AI: useful answer first, natural language, concise unless detail helps. Never expose hidden reasoning. Clearly distinguish evidence from inference. For personal claims, use only the supplied NEXUS evidence. If evidence is incomplete, say what is missing. Cite source labels naturally when useful.
+    You are NEXUS, a polished private personal intelligence assistant. Answer like a high-quality consumer AI: useful answer first, natural language, concise unless detail helps. Never expose hidden reasoning. Clearly distinguish evidence from inference. For personal claims, use only the supplied NEXUS evidence. If evidence is incomplete, say what is missing. Cite source labels naturally when useful. When a whole-person synthesis context is supplied, reason across domains and time rather than treating each source as an isolated fact. Never turn absence of evidence into a negative personal conclusion.
     """
 
     func answer(question raw: String,
@@ -24,19 +24,23 @@ final class NexusV9Assistant: ObservableObject {
         guard !question.isEmpty else { return NexusV8SharedAnswer(text: "Ask me anything about your NEXUS data.", evidence: []) }
         busy = true; defer { busy = false }
         let intelligence = NexusV9IntelligenceStore.shared
-        if let cached = intelligence.cachedAnswer(similarTo: question), attachments.isEmpty, extraContext.isEmpty {
-            status = "Ready • semantic cache"
-            onPartial?(cached.answer)
-            return NexusV8SharedAnswer(text: cached.answer, evidence: cached.evidence)
-        }
 
         if intelligence.chunks.isEmpty && (!records.isEmpty || !NexusV8FileLibrary.shared.files.isEmpty) {
             status = "Building retrieval index…"
             await intelligence.index(records: records, files: NexusV8FileLibrary.shared.files)
         }
 
+        let automaticSynthesisContext = extraContext.isEmpty ? NexusSynthesisStore.shared.assistantContextIfNeeded(for: question, intelligence: intelligence) : ""
+        let mergedExtraContext = [extraContext, automaticSynthesisContext].filter { !$0.isEmpty }.joined(separator: "\n\n")
+
+        if let cached = intelligence.cachedAnswer(similarTo: question), attachments.isEmpty, mergedExtraContext.isEmpty {
+            status = "Ready • semantic cache"
+            onPartial?(cached.answer)
+            return NexusV8SharedAnswer(text: cached.answer, evidence: cached.evidence)
+        }
+
         let route = intelligence.routeLabel(question: question, attachments: attachments)
-        status = route
+        status = automaticSynthesisContext.isEmpty ? route : "Whole-person synthesis + deep evidence"
         let retrieved = intelligence.evidenceContext(for: question)
         lastCitations = retrieved.1
         let tray = intelligence.contextTray.map { "[CONTEXT TRAY • \($0.label)]\n\($0.preview)" }.joined(separator: "\n\n")
@@ -54,18 +58,18 @@ final class NexusV9Assistant: ObservableObject {
         PINNED CONTEXT TRAY:
         \(tray)
 
-        EXTRA FILE / SELECTION CONTEXT:
-        \(String(extraContext.prefix(18_000)))
+        WHOLE-PERSON / EXTRA CONTEXT:
+        \(String(mergedExtraContext.prefix(18_000)))
         """
-        lastContextBudget = intelligence.contextBudgetSummary(for: question)
+        lastContextBudget = intelligence.contextBudgetSummary(for: question) + (automaticSynthesisContext.isEmpty ? "" : " • synthesis context attached")
 
         let q = question.lowercased()
-        let deep = route.contains("Deep") || q.contains("exhaustive") || q.contains("comprehensive")
+        let deep = route.contains("Deep") || !automaticSynthesisContext.isEmpty || q.contains("exhaustive") || q.contains("comprehensive")
         let visual = route.contains("Vision")
         if deep || visual {
             let previous = NexusV8FastChatHub.shared.mode
             NexusV8FastChatHub.shared.mode = deep ? .deep : .automatic
-            let bridgedQuestion = "\(question)\n\nV9 RETRIEVED CONTEXT:\n\(String(combined.prefix(18_000)))"
+            let bridgedQuestion = "\(question)\n\nV9 RETRIEVED + SYNTHESIS CONTEXT:\n\(String(combined.prefix(18_000)))"
             let result = await NexusV8FastChatHub.shared.answer(question: bridgedQuestion, records: records, attachments: attachments, history: history, onPartial: onPartial)
             NexusV8FastChatHub.shared.mode = previous
             let evidence = Array(Set(result.evidence + retrieved.1.map { "\($0.sourceName) • \($0.location)" })).prefix(14)
@@ -93,7 +97,7 @@ final class NexusV9Assistant: ObservableObject {
         }
 
         if output.isEmpty {
-            if retrieved.1.isEmpty && extraContext.isEmpty { output = "I don’t have enough relevant local evidence for that yet. Import or connect the source that would answer it, or load a local language model for general offline chat." }
+            if retrieved.1.isEmpty && mergedExtraContext.isEmpty { output = "I don’t have enough relevant local evidence for that yet. Import or connect the source that would answer it, or load a local language model for general offline chat." }
             else { output = "I found relevant evidence, but no language model is currently available to synthesize it. Load a shared local model and I can answer from the indexed sources immediately." }
             onPartial?(output)
         }
@@ -237,7 +241,7 @@ struct NexusV9ContextInspectorView: View {
     let query: String
     var body: some View {
         List {
-            Section("Context budget") { Text(query.isEmpty ? "Type a question in Chat to preview its retrieval budget." : intelligence.contextBudgetSummary(for: query)); Text("NEXUS keeps the large knowledge base indexed locally and sends only the most relevant evidence into active model context.").font(.caption).foregroundStyle(.secondary) }
+            Section("Context budget") { Text(query.isEmpty ? "Type a question in Chat to preview its retrieval budget." : intelligence.contextBudgetSummary(for: query)); Text("NEXUS keeps the large knowledge base indexed locally and sends only the most relevant evidence into active model context. Holistic questions also attach the whole-person synthesis model.").font(.caption).foregroundStyle(.secondary) }
             Section("Pinned context tray") { if intelligence.contextTray.isEmpty { Text("Nothing pinned yet.") } else { ForEach(intelligence.contextTray) { item in VStack(alignment: .leading) { Text(item.label).font(.headline); Text(item.preview).font(.caption).lineLimit(3) } }; Button(role: .destructive) { intelligence.clearTray() } label: { Text("Clear tray") } } }
             Section("Diagnostics") { LabeledContent("Indexed chunks", value: "\(intelligence.diagnostics.indexedChunks)"); LabeledContent("Last retrieval", value: "\(intelligence.diagnostics.lastRetrievalCount)"); LabeledContent("Last context", value: "\(intelligence.diagnostics.lastContextCharacters) chars"); LabeledContent("Cache hits", value: "\(intelligence.diagnostics.cacheHits)"); LabeledContent("Route", value: intelligence.diagnostics.lastRoute) }
         }.navigationTitle("Context Inspector")
