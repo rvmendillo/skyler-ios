@@ -48,6 +48,7 @@ final class NexusMultimodalStore: ObservableObject {
     private var model: Model?
     private var chat: Chat?
     private var memoryObserver: NSObjectProtocol?
+    private var memoryPressurePending = false
     private let installKey = "nexus.multimodal.installs.v1"
 
     static let lfm25 = NexusMultimodalPreset(
@@ -85,7 +86,15 @@ final class NexusMultimodalStore: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.releaseRuntime(reason: "iOS memory pressure • multimodal model unloaded; downloads remain installed") }
+            Task { @MainActor in
+                guard let self else { return }
+                if self.busy {
+                    self.memoryPressurePending = true
+                    self.status = "iOS memory pressure detected • stopping at a safe file boundary before releasing vision RAM"
+                } else {
+                    self.releaseRuntime(reason: "iOS memory pressure • multimodal model unloaded; downloads remain installed")
+                }
+            }
         }
     }
 
@@ -106,7 +115,7 @@ final class NexusMultimodalStore: ObservableObject {
             text += String(format: " • %.1f MB/s", speed / 1_048_576.0)
             if done < total {
                 let eta = Double(total - done) / speed
-                if eta >= 60 { text += String(format: " • ETA %.0fm %.0fs", floor(eta / 60), eta.truncatingRemainder(dividingBy: 60)) }
+                if eta >= 60 { text += String(format: " • ETA %.0fm %.0fs", floor(eta / 60), eta.truncatingRemainder(dividingBy: 60))) }
                 else { text += String(format: " • ETA %.0fs", max(0, eta)) }
             }
         }
@@ -132,6 +141,7 @@ final class NexusMultimodalStore: ObservableObject {
         defer {
             busy = false
             downloadingPresetID = ""
+            releaseIfMemoryPressurePending()
         }
         do {
             let baseName = preset.basePath.split(separator: "/").last.map(String.init) ?? "base.gguf"
@@ -192,7 +202,10 @@ final class NexusMultimodalStore: ObservableObject {
         lastError = ""
         progress = max(progress, 0.05)
         status = "Loading \(preset.name)…"
-        defer { busy = false }
+        defer {
+            busy = false
+            releaseIfMemoryPressurePending()
+        }
         do {
             releaseRuntime(reason: nil)
             let loaded = try await Model.load(modelPath: install.baseLocalPath,
@@ -251,12 +264,19 @@ final class NexusMultimodalStore: ObservableObject {
         lastError = ""
         progress = 0
         results.removeAll(keepingCapacity: true)
-        defer { busy = false }
+        defer {
+            busy = false
+            releaseIfMemoryPressurePending()
+        }
 
         let cleanQuestion = question.trimmingCharacters(in: .whitespacesAndNewlines)
         let instruction = cleanQuestion.isEmpty ? "Analyze this file comprehensively. Summarize its content, important details, patterns, and uncertainty." : cleanQuestion
 
         for (index, url) in urls.enumerated() {
+            if memoryPressurePending {
+                status = "Stopping analysis at a safe boundary because iOS reported memory pressure"
+                break
+            }
             status = "Analyzing \(url.lastPathComponent) • \(index + 1)/\(urls.count)"
             progress = Double(index) / Double(max(urls.count, 1))
             do {
@@ -267,8 +287,11 @@ final class NexusMultimodalStore: ObservableObject {
                 results.append(.init(fileName: url.lastPathComponent, kind: "Error", answer: error.localizedDescription))
             }
             progress = Double(index + 1) / Double(max(urls.count, 1))
+            await Task.yield()
         }
-        status = "Finished • \(results.count) file result\(results.count == 1 ? "" : "s") • processed sequentially to cap peak memory"
+        if !memoryPressurePending {
+            status = "Finished • \(results.count) file result\(results.count == 1 ? "" : "s") • processed sequentially to cap peak memory"
+        }
     }
 
     private func analyzeOne(url: URL, question: String, chat: Chat) async throws -> NexusFileAnalysisResult {
@@ -280,7 +303,7 @@ final class NexusMultimodalStore: ObservableObject {
         let textExts: Set<String> = ["txt","md","markdown","json","jsonl","csv","tsv","html","htm","xml","yaml","yml","toml","ini","log","swift","py","js","ts","tsx","jsx","java","kt","kts","c","h","cpp","hpp","m","mm","css","scss","sql","sh","zsh","fish","rs","go","rb","php","r","dart"]
 
         if imageExts.contains(ext) {
-            let prepared = try Self.downsampleImage(url, maxPixel: 1600)
+            let prepared = try Self.downsampleImage(url, maxPixel: 1280)
             defer { try? FileManager.default.removeItem(at: prepared) }
             let prompt = Prompt([
                 Prompt.text("FILE: \(url.lastPathComponent)\nREQUEST: \(question)\nInspect the image carefully. Mention visible text, layout, objects, relationships, anomalies and uncertainty when relevant."),
@@ -293,13 +316,13 @@ final class NexusMultimodalStore: ObservableObject {
         if ext == "pdf" { return try await analyzePDF(url: url, question: question, chat: chat) }
 
         if textExts.contains(ext) || Self.isLikelyText(url) {
-            let text = try Self.readTextCapped(url, maxBytes: 1_200_000, maxCharacters: 48_000)
+            let text = try Self.readTextCapped(url, maxBytes: 1_000_000, maxCharacters: 42_000)
             let prompt = "FILE: \(url.lastPathComponent)\nREQUEST: \(question)\n\nEXTRACTED CONTENT (may be capped for memory):\n\(text)\n\nAnalyze the file from the extracted content. Clearly note if truncation can affect conclusions."
             let output = try await chat.ask(prompt).completed()
             return .init(fileName: url.lastPathComponent, kind: "Text / structured file", answer: output.trimmingCharacters(in: .whitespacesAndNewlines))
         }
 
-        if let preview = try? await Self.quickLookPreview(url, maxPixel: 1500) {
+        if let preview = try? await Self.quickLookPreview(url, maxPixel: 1200) {
             defer { try? FileManager.default.removeItem(at: preview) }
             let metadata = Self.metadataSummary(url)
             let prompt = Prompt([
@@ -324,17 +347,17 @@ final class NexusMultimodalStore: ObservableObject {
         for i in 0..<textPageLimit {
             if let pageText = pdf.page(at: i)?.string, !pageText.isEmpty {
                 extracted += "\n--- PAGE \(i + 1) ---\n" + pageText
-                if extracted.count >= 42_000 { break }
+                if extracted.count >= 38_000 { break }
             }
         }
-        extracted = String(extracted.prefix(42_000))
+        extracted = String(extracted.prefix(38_000))
 
         var parts: [PromptPart] = [
             Prompt.text("FILE: \(url.lastPathComponent)\nREQUEST: \(question)\nPDF PAGES: \(pdf.pageCount)\nEXTRACTED TEXT (capped):\n\(extracted)\n\nI may also provide up to two rendered page previews. Analyze both text and visuals; state when later pages were not inspected.")
         ]
         var temps: [URL] = []
         for index in 0..<min(pdf.pageCount, 2) {
-            if let page = pdf.page(at: index), let imageURL = try? Self.renderPDFPage(page, index: index, maxPixel: 1350) {
+            if let page = pdf.page(at: index), let imageURL = try? Self.renderPDFPage(page, index: index, maxPixel: 1150) {
                 temps.append(imageURL)
                 parts.append(Prompt.image(imageURL.path))
             }
@@ -346,20 +369,29 @@ final class NexusMultimodalStore: ObservableObject {
 
     private func recommendedContext(for preset: NexusMultimodalPreset) -> UInt32 {
         let ramGB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824.0
-        if ramGB <= 4.5 { return 1536 }
-        if ramGB <= 6.5 { return preset.estimatedBytes > 2_000_000_000 ? 1536 : 2048 }
-        if ramGB <= 8.5 { return preset.estimatedBytes > 2_000_000_000 ? 2048 : 3072 }
-        return 4096
+        if ramGB <= 4.5 { return 1280 }
+        if ramGB <= 6.5 { return preset.estimatedBytes > 2_000_000_000 ? 1280 : 1792 }
+        if ramGB <= 8.5 { return preset.estimatedBytes > 2_000_000_000 ? 1792 : 2560 }
+        return 3584
     }
 
     private func isSafeToLoad(_ preset: NexusMultimodalPreset) -> Bool {
         let runtimeEstimate = Double(preset.estimatedBytes) * 1.24 + 520_000_000
-        return runtimeEstimate < Double(ProcessInfo.processInfo.physicalMemory) * 0.72
+        return runtimeEstimate < Double(ProcessInfo.processInfo.physicalMemory) * 0.68
     }
 
     private func releaseRuntime(reason: String?) {
-        chat?.stopGeneration(); chat = nil; model = nil; activePresetID = ""
+        chat?.stopGeneration()
+        chat = nil
+        model = nil
+        activePresetID = ""
         if let reason { status = reason }
+    }
+
+    private func releaseIfMemoryPressurePending() {
+        guard memoryPressurePending else { return }
+        memoryPressurePending = false
+        releaseRuntime(reason: "iOS memory pressure • vision runtime released safely; downloaded weights remain installed")
     }
 
     private func persistInstalls() {
@@ -387,7 +419,7 @@ final class NexusMultimodalStore: ObservableObject {
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceThumbnailMaxPixelSize: maxPixel
         ]
-        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary), let data = UIImage(cgImage: cg).jpegData(compressionQuality: 0.82) else {
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary), let data = UIImage(cgImage: cg).jpegData(compressionQuality: 0.80) else {
             throw NSError(domain: "NEXUS.Multimodal", code: 23, userInfo: [NSLocalizedDescriptionKey: "Could not prepare image for local vision model."])
         }
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("nexus-mm-\(UUID().uuidString).jpg")
@@ -401,7 +433,7 @@ final class NexusMultimodalStore: ObservableObject {
         let px = CGFloat(maxPixel)
         let size: CGSize = ratio >= 1 ? .init(width: px, height: px / ratio) : .init(width: px * ratio, height: px)
         let image = page.thumbnail(of: size, for: .mediaBox)
-        guard let data = image.jpegData(compressionQuality: 0.78) else { throw NSError(domain: "NEXUS.Multimodal", code: 24, userInfo: [NSLocalizedDescriptionKey: "Could not render PDF page preview."]) }
+        guard let data = image.jpegData(compressionQuality: 0.76) else { throw NSError(domain: "NEXUS.Multimodal", code: 24, userInfo: [NSLocalizedDescriptionKey: "Could not render PDF page preview."]) }
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("nexus-pdf-\(index)-\(UUID().uuidString).jpg")
         try data.write(to: out, options: .atomic)
         return out
@@ -417,7 +449,7 @@ final class NexusMultimodalStore: ObservableObject {
                 else { continuation.resume(throwing: error ?? NSError(domain: "NEXUS.Multimodal", code: 25, userInfo: [NSLocalizedDescriptionKey: "No system preview is available for this file type."])) }
             }
         }
-        guard let data = representation.uiImage.jpegData(compressionQuality: 0.80) else { throw NSError(domain: "NEXUS.Multimodal", code: 26, userInfo: [NSLocalizedDescriptionKey: "Could not encode system file preview."]) }
+        guard let data = representation.uiImage.jpegData(compressionQuality: 0.78) else { throw NSError(domain: "NEXUS.Multimodal", code: 26, userInfo: [NSLocalizedDescriptionKey: "Could not encode system file preview."]) }
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("nexus-preview-\(UUID().uuidString).jpg")
         try data.write(to: out, options: .atomic)
         return out
@@ -528,7 +560,7 @@ struct MultimodalLabV8View: View {
             }
 
             Section("Download + memory strategy") {
-                Text("Each multimodal component uses resumable HTTP byte ranges. Language weights and the vision projector download at the same time, each with up to three chunk lanes, so a model can use up to six concurrent network lanes when the server supports ranges. Progress shows percentage, bytes, throughput, ETA and active lanes. Inference still keeps only one vision model resident, downsamples visuals, caps text/PDF context and processes files sequentially to control RAM and heat.")
+                Text("Each multimodal component uses resumable HTTP byte ranges. Language weights and the vision projector download at the same time, each with up to three chunk lanes. Inference keeps one vision model resident, downsamples visuals, caps text/PDF context, processes files sequentially, and defers memory-pressure unloads until a safe inference boundary.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
