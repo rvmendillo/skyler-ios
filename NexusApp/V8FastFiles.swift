@@ -22,6 +22,9 @@ struct FilesV8FastView: View {
                 Text("Files stay inside NEXUS after import. Open them directly, attach them in Chat, or analyze several formats together with the same fast shared AI used by Chat.")
                     .font(.subheadline).foregroundStyle(.secondary)
                 Button { showImporter = true } label: { Label("Import files", systemImage: "square.and.arrow.down") }
+                NavigationLink { NexusMediaImportView() } label: {
+                    Label("Import actual photos & videos", systemImage: "photo.stack.fill")
+                }
                 NavigationLink { NexusAnalyzedLibraryView() } label: {
                     Label("Analyzed Library", systemImage: "sparkles.rectangle.stack.fill")
                 }
@@ -51,12 +54,12 @@ struct FilesV8FastView: View {
                         .foregroundStyle(vision.activePresetID.isEmpty ? Color.secondary : Color.green)
                 }
                 NavigationLink("Shared language models") { SharedModelsV8EnhancedView() }
-                NavigationLink("Vision model manager") { MultimodalLabV8View() }
+                NavigationLink("Shared vision models") { SharedVisionModelsEnhancedView() }
             }
 
             Section("Imported files") {
                 if library.files.isEmpty {
-                    ContentUnavailableView("No files yet", systemImage: "folder", description: Text("Import images, PDFs, CSVs, text/code, or other documents."))
+                    ContentUnavailableView("No files yet", systemImage: "folder", description: Text("Import images, videos, PDFs, CSVs, text/code, or other documents."))
                 }
                 ForEach(library.files) { item in
                     HStack(spacing: 10) {
