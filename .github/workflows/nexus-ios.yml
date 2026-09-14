@@ -68,7 +68,7 @@ jobs:
           print('wrote',p,len(png),'bytes')
           PY
 
-      - name: Apply Xcode 26 V9 compatibility and product UI patches
+      - name: Apply Xcode 26 compatibility and model-management patches
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -92,7 +92,6 @@ jobs:
           replace('NexusApp/V9Platform.swift', '@State private var body=""', '@State private var reportBody=""')
           replace('NexusApp/V9Platform.swift', 'TextEditor(text:$body)', 'TextEditor(text:$reportBody)')
           replace('NexusApp/V9Platform.swift', 'body:body,citations:assistant.lastCitations', 'body:reportBody,citations:assistant.lastCitations', count=4)
-          replace('NexusApp/V9Root.swift', '.font(.largeTitle.black())', '.font(.largeTitle.weight(.black))')
           replace('NexusApp/V9Documents.swift', 'NexusV8CSVViewer(url: item.url)', 'NexusV8CSVViewer(url: item.url, delimiter: ",")')
 
           replace(
@@ -120,12 +119,6 @@ jobs:
               'NexusApp/V8Multimodal.swift',
               '''    func download(_ preset: NexusMultimodalPreset) async {\n        guard !busy else { return }\n        busy = true''',
               '''    func download(_ preset: NexusMultimodalPreset) async {\n        guard !busy else { return }\n        if isDownloaded(preset) {\n            progress = 1\n            languageDownload = .zero\n            visionDownload = .zero\n            lastError = ""\n            status = "Already downloaded • \\(preset.name) • tap Load when needed"\n            return\n        }\n        busy = true'''
-          )
-
-          replace(
-              'NexusApp/V9Root.swift',
-              'NavigationLink("Storage Manager"){NexusV9StorageView()};NavigationLink("Reports & Intelligence Package"){NexusV9ExportView()}',
-              'NavigationLink("Storage Manager"){NexusV9StorageView()};NavigationLink("Backup & Restore"){NexusV9BackupView()};NavigationLink("Reports & Intelligence Package"){NexusV9ExportView()}'
           )
           PY
 
