@@ -73,6 +73,7 @@ targets:
       - NexusApp/V9Backup.swift
       - NexusApp/V9NiceFeatures.swift
       - NexusApp/V9NiceMetadata.swift
+      - NexusApp/V9Synthesis.swift
       - NexusApp/V9Root.swift
       - NexusApp/NEXUSApp.swift
       - NexusApp/Views.swift
